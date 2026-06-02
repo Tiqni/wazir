@@ -15,6 +15,14 @@ type fakeAPI struct {
 	created        bool
 	updatedFieldID string
 	updatedOpts    []optionInput
+
+	resolveRepo   string
+	resolveNumber int
+	resolveCalled bool
+	findItemID    string
+	findItemFound bool
+	setItemID     string
+	setOptionID   string
 }
 
 func (f *fakeAPI) OwnerID(ctx context.Context, ownerType, login string) (string, error) {
@@ -49,13 +57,15 @@ func (f *fakeAPI) UpdateStatusOptions(ctx context.Context, fieldID string, opts 
 	return nil
 }
 func (f *fakeAPI) FindItem(ctx context.Context, projectID, issueNodeID string) (string, bool, error) {
-	return "", false, nil
+	return f.findItemID, f.findItemFound, nil
 }
 func (f *fakeAPI) SetItemStatus(ctx context.Context, projectID, itemID, fieldID, optionID string) error {
+	f.setItemID, f.setOptionID = itemID, optionID
 	return nil
 }
 func (f *fakeAPI) ResolveIssue(ctx context.Context, issueNodeID string) (issueRef, error) {
-	return issueRef{}, nil
+	f.resolveCalled = true
+	return issueRef{Repo: f.resolveRepo, Number: f.resolveNumber}, nil
 }
 func (f *fakeAPI) ListItems(ctx context.Context, projectID, statusFieldID, optionID string) ([]listedItem, error) {
 	return nil, nil
