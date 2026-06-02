@@ -125,9 +125,11 @@ var ErrRepoNotAllowed = errors.New("board/github: repo not in allow-list")
 // GraphQL node lookup; the result is cached for next time. It refuses cards
 // whose repo is not in the allow-list (multi-repo containment, spec §6).
 func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef, error) {
-	if rec, ok, err := b.store.GetCard(cardID); err != nil {
+	rec, ok, err := b.store.GetCard(cardID)
+	if err != nil {
 		return issueRef{}, err
-	} else if ok && rec.Repo != "" {
+	}
+	if ok && rec.Repo != "" {
 		if !b.repoAllowed(rec.Repo) {
 			return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, rec.Repo)
 		}
@@ -140,12 +142,17 @@ func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef,
 	if !b.repoAllowed(ref.Repo) {
 		return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, ref.Repo)
 	}
-	_ = b.store.PutCard(cardID, store.CardRecord{Repo: ref.Repo, IssueNumber: ref.Number})
+	// Merge into any existing record so a previously-cached ProjectItemID
+	// (e.g. set by MoveTo) is preserved. Caching is best-effort: resolution
+	// already succeeded and this package is logger-free by design.
+	rec.Repo = ref.Repo
+	rec.IssueNumber = ref.Number
+	_ = b.store.PutCard(cardID, rec)
 	return ref, nil
 }
 
 func splitRepo(full string) (owner, name string, err error) {
-	parts := strings.SplitN(full, "/", 2)
+	parts := strings.Split(full, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("invalid repo %q (want owner/name)", full)
 	}
@@ -188,7 +195,8 @@ func (b *GitHubBoard) SetBody(ctx context.Context, cardID, markdown string) erro
 	}
 	newBody := markdown
 	if orig := cur.GetBody(); orig != "" {
-		newBody = markdown + "\n\n<details>\n<summary>Original idea</summary>\n\n" + orig + "\n\n</details>\n"
+		// Keep the original idea in a collapsed block at the top (init-plan §8.5).
+		newBody = "<details>\n<summary>Original idea</summary>\n\n" + orig + "\n\n</details>\n\n" + markdown
 	}
 	_, _, err = b.rest.Issues.Edit(ctx, owner, name, ref.Number,
 		&github.IssueRequest{Body: &newBody})
@@ -218,8 +226,11 @@ func (b *GitHubBoard) MoveTo(ctx context.Context, cardID string, phase board.Pha
 	if err := b.api.SetItemStatus(ctx, rec.ProjectNodeID, itemID, rec.StatusFieldID, optionID); err != nil {
 		return fmt.Errorf("set status: %w", err)
 	}
-	cardRec, _, _ := b.store.GetCard(cardID)
-	cardRec.ProjectItemID = itemID
+	cardRec, _, err := b.store.GetCard(cardID)
+	if err != nil {
+		return fmt.Errorf("read card cache: %w", err)
+	}
+	cardRec.ProjectItemID = itemID // preserves any cached Repo/IssueNumber
 	_ = b.store.PutCard(cardID, cardRec)
 	return nil
 }

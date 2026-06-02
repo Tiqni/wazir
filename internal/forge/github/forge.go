@@ -5,6 +5,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-github/v66/github"
 
@@ -20,15 +21,11 @@ type GitHubForge struct {
 func New(rest *github.Client) *GitHubForge { return &GitHubForge{rest: rest} }
 
 func splitRepo(full string) (owner, name string, err error) {
-	for i := 0; i < len(full); i++ {
-		if full[i] == '/' {
-			if i == 0 || i == len(full)-1 {
-				break
-			}
-			return full[:i], full[i+1:], nil
-		}
+	parts := strings.Split(full, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid repo %q (want owner/name)", full)
 	}
-	return "", "", fmt.Errorf("invalid repo %q (want owner/name)", full)
+	return parts[0], parts[1], nil
 }
 
 // OpenPR opens a pull request and returns its HTML URL.

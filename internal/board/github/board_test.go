@@ -75,6 +75,9 @@ func TestSetBodyKeepsOriginalInDetails(t *testing.T) {
 	if !strings.Contains(gotBody, "# Spec") || !strings.Contains(gotBody, "<details>") || !strings.Contains(gotBody, "original idea") {
 		t.Errorf("body = %q, want spec + collapsed original", gotBody)
 	}
+	if strings.Index(gotBody, "<details>") > strings.Index(gotBody, "# Spec") {
+		t.Errorf("collapsed original idea should be at the top, before the spec; got %q", gotBody)
+	}
 }
 
 func TestResolveCardUsesNodeFallbackThenCaches(t *testing.T) {

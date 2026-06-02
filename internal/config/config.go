@@ -97,6 +97,9 @@ func (c Config) validate() error {
 	if c.Project.Owner == "" {
 		return fmt.Errorf("project.owner is required")
 	}
+	if c.Project.Number <= 0 {
+		return fmt.Errorf("project.number must be set and > 0 (got %d)", c.Project.Number)
+	}
 	return nil
 }
 

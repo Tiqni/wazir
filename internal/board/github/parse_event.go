@@ -91,11 +91,21 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		if item == nil || item.GetProjectNodeID() != b.projectNodeID {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
-		return board.Event{
-			Kind:   board.EventPhaseChanged,
-			CardID: item.GetContentNodeID(),
-			Dedup:  delivery,
-		}, nil
+		cardID := item.GetContentNodeID()
+		ev := board.Event{Kind: board.EventPhaseChanged, CardID: cardID, Dedup: delivery}
+		// Best-effort: the payload carries no repo, but if we already know the
+		// card's repo, populate it and drop events for repos outside the
+		// allow-list. A cold cache can't filter here — the resolver enforces it
+		// later when the card's repo is looked up.
+		if b.store != nil {
+			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" {
+				if !b.repoAllowed(rec.Repo) {
+					return board.Event{Kind: board.EventIgnore}, nil
+				}
+				ev.Repo = rec.Repo
+			}
+		}
+		return ev, nil
 
 	default:
 		return board.Event{Kind: board.EventIgnore}, nil

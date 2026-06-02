@@ -18,14 +18,30 @@ func (m *Memory) GetBoard(projectID string) (BoardRecord, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.boards[projectID]
+	if ok {
+		r = copyBoardRecord(r)
+	}
 	return r, ok, nil
 }
 
 func (m *Memory) PutBoard(projectID string, rec BoardRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.boards[projectID] = rec
+	m.boards[projectID] = copyBoardRecord(rec)
 	return nil
+}
+
+// copyBoardRecord deep-copies the Options map so callers can't mutate stored
+// state by reference — matching the bbolt impl, which round-trips through JSON.
+func copyBoardRecord(rec BoardRecord) BoardRecord {
+	if rec.Options != nil {
+		opts := make(map[string]string, len(rec.Options))
+		for k, v := range rec.Options {
+			opts[k] = v
+		}
+		rec.Options = opts
+	}
+	return rec
 }
 
 func (m *Memory) GetCard(issueNodeID string) (CardRecord, bool, error) {
