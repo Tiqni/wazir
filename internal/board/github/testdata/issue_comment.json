@@ -1,0 +1,1 @@
+{"action":"created","issue":{"node_id":"ISSUE_NODE_1","number":12},"comment":{"id":555,"body":"here is my answer","user":{"login":"alice"},"created_at":"2026-06-02T10:00:00Z"},"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}

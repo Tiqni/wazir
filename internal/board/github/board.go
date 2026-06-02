@@ -29,6 +29,8 @@ type GitHubBoard struct {
 	projectNumber int
 	boardName     string
 	botLogin      string
+	webhookSecret string
+	projectNodeID string
 	repos         []string // allow-list ("owner/name")
 
 	cached *store.BoardRecord // lazily loaded board identity
