@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -16,5 +17,15 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: wazir <provision|bootstrap|card> [args]")
 	}
-	return fmt.Errorf("unknown command %q", args[0])
+	ctx := context.Background()
+	switch args[0] {
+	case "provision":
+		return cmdProvision(ctx, true)
+	case "bootstrap":
+		return cmdProvision(ctx, false)
+	case "card":
+		return cmdCard(ctx, args[1:])
+	default:
+		return fmt.Errorf("unknown command %q", args[0])
+	}
 }
