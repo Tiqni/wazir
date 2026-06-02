@@ -89,12 +89,14 @@ func (b *GitHubBoard) EnsureProvisioned(ctx context.Context, spec board.BoardSpe
 		return fmt.Errorf("cache board: %w", err)
 	}
 	b.cached = &rec
+	b.projectNodeID = rec.ProjectNodeID
 	return nil
 }
 
 // board lazily loads the cached board identity (single board, v1).
 func (b *GitHubBoard) board(ctx context.Context) (store.BoardRecord, error) {
 	if b.cached != nil {
+		b.projectNodeID = b.cached.ProjectNodeID
 		return *b.cached, nil
 	}
 	info, found, err := b.api.GetProject(ctx, b.ownerType, b.owner, b.projectNumber)
@@ -112,20 +114,31 @@ func (b *GitHubBoard) board(ctx context.Context) (store.BoardRecord, error) {
 		return store.BoardRecord{}, ErrNotProvisioned
 	}
 	b.cached = &rec
+	b.projectNodeID = rec.ProjectNodeID
 	return rec, nil
 }
 
+// ErrRepoNotAllowed means a card targets a repo outside the configured allow-list.
+var ErrRepoNotAllowed = errors.New("board/github: repo not in allow-list")
+
 // resolveCard returns a card's forge coordinates, using the cache then a
-// GraphQL node lookup; the result is cached for next time.
+// GraphQL node lookup; the result is cached for next time. It refuses cards
+// whose repo is not in the allow-list (multi-repo containment, spec §6).
 func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef, error) {
 	if rec, ok, err := b.store.GetCard(cardID); err != nil {
 		return issueRef{}, err
 	} else if ok && rec.Repo != "" {
+		if !b.repoAllowed(rec.Repo) {
+			return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, rec.Repo)
+		}
 		return issueRef{Repo: rec.Repo, Number: rec.IssueNumber}, nil
 	}
 	ref, err := b.api.ResolveIssue(ctx, cardID)
 	if err != nil {
 		return issueRef{}, fmt.Errorf("resolve issue %s: %w", cardID, err)
+	}
+	if !b.repoAllowed(ref.Repo) {
+		return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, ref.Repo)
 	}
 	_ = b.store.PutCard(cardID, store.CardRecord{Repo: ref.Repo, IssueNumber: ref.Number})
 	return ref, nil

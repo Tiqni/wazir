@@ -1,7 +1,7 @@
 # Wazir M0 setup
 
 ## Prerequisites
-- Go 1.22+, the `gh` CLI (for the provisioning spike).
+- Go 1.25+ (required transitively by `golang.org/x/oauth2`), the `gh` CLI (for the provisioning spike).
 - A fine-grained PAT with **Projects: read/write**, **Issues: read/write**,
   **Pull requests: read/write**, **Contents: read/write**, scoped to *every repo*
   whose cards appear on the board (init-plan §4.1).
