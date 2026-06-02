@@ -16,12 +16,12 @@ func New(httpClient *http.Client, cfg config.Config, st store.Store) *GitHubBoar
 		api:           &ghProjects{gql: githubv4.NewClient(httpClient)},
 		rest:          github.NewClient(httpClient),
 		store:         st,
-		owner:         cfg.ProjectOwner,
-		ownerType:     cfg.OwnerType,
-		projectNumber: cfg.ProjectNumber,
-		boardName:     cfg.BoardName,
+		owner:         cfg.Project.Owner,
+		ownerType:     cfg.GitHub.OwnerType,
+		projectNumber: cfg.Project.Number,
+		boardName:     cfg.Project.BoardName,
 		botLogin:      cfg.BotLogin,
 		repos:         cfg.Repos,
-		webhookSecret: cfg.WebhookSecret,
+		webhookSecret: cfg.GitHub.WebhookSecret,
 	}
 }

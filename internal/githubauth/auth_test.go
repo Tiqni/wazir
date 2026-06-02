@@ -9,7 +9,9 @@ import (
 )
 
 func TestPATReturnsClient(t *testing.T) {
-	c, err := HTTPClient(context.Background(), config.Config{GitHubAuth: "pat", GitHubPAT: "tok"})
+	c, err := HTTPClient(context.Background(), config.Config{
+		GitHub: config.GitHubConfig{Auth: "pat", PAT: "tok"},
+	})
 	if err != nil {
 		t.Fatalf("HTTPClient: %v", err)
 	}
@@ -19,7 +21,9 @@ func TestPATReturnsClient(t *testing.T) {
 }
 
 func TestAppNotWiredYet(t *testing.T) {
-	_, err := HTTPClient(context.Background(), config.Config{GitHubAuth: "app", GitHubAppID: 1, GitHubPrivateKey: "x"})
+	_, err := HTTPClient(context.Background(), config.Config{
+		GitHub: config.GitHubConfig{Auth: "app", AppID: 1, PrivateKey: "x"},
+	})
 	if !errors.Is(err, ErrAppAuthNotWired) {
 		t.Fatalf("want ErrAppAuthNotWired, got %v", err)
 	}
