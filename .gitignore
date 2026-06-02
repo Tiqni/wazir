@@ -1,3 +1,35 @@
+# Go
+#   Binaries, test artifacts, and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+/wazir
+/wazird
+/bin/
+vendor/
+coverage.out
+
+# Local runtime state (clones, worktrees, sqlite store)
+*.db
+*.sqlite
+*.sqlite3
+/worktrees/
+/clones/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
