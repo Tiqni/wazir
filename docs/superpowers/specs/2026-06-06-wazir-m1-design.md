@@ -290,18 +290,42 @@ Deferred as deliberate seams, not gaps:
 
 ## 11. Acceptance checklist
 
-- [ ] `internal/board/memory` implements the full `board.Board` port; the scripted state machine runs
-      end-to-end with no network.
-- [ ] `internal/orchestrator`: pure `Resolver` (table-tested over all `(phase, event)`), `Worker`
+All items verified met by the final whole-implementation review (branch `m1-orchestrator`).
+
+- [x] `internal/board/memory` implements the full `board.Board` port; the scripted state machine runs
+      end-to-end with no network (`TestFullStateMachine`).
+- [x] `internal/orchestrator`: pure `Resolver` (table-tested over all `(phase, event)`), `Worker`
       executing every `Decision` branch, `Brain` port + §9 result types, transcript builder.
-- [ ] Orchestrator imports only `board` + `forge` + its own `Brain` port (`imports_test.go` green).
-- [ ] `internal/queue`: per-card keyed-mutex serialization + concurrent distinct cards + cross-restart
+- [x] Orchestrator imports only `board` + `forge` + `store` + its own `Brain` port — no provider
+      package (`imports_test.go` green).
+- [x] `internal/queue`: per-card keyed-mutex serialization + concurrent distinct cards + cross-restart
       TTL lock that self-heals.
-- [ ] `internal/server`: receiver validates via `board.ParseEvent`, drops ignore/bot/duplicate events,
-      enqueues survivors by `CardID`; `httptest`-covered.
-- [ ] `internal/store`: `deliveries` (dedupe), `locks` (TTL), and `CardRecord.LastProcessedCommentID`
+- [x] `internal/server`: receiver validates via `board.ParseEvent`, drops ignore/bot/duplicate events,
+      enqueues survivors by `CardID`; `httptest`-covered (incl. 405/413/empty-delivery paths).
+- [x] `internal/store`: `deliveries` (dedupe), `locks` (TTL), and `CardRecord.LastProcessedCommentID`
       in both bbolt and memory impls; existing tests still green.
-- [ ] `wazir serve --addr` boots the receiver → queue → worker (faked brain) over the configured board
+- [x] `wazir serve --addr` boots the receiver → queue → worker (faked brain) over the configured board
       and drains on shutdown.
-- [ ] Idempotency proven: a replayed delivery resolves a card exactly once.
-- [ ] `go test ./...` green (no network/credentials); `go vet ./...` clean.
+- [x] Idempotency proven: a replayed delivery resolves a card exactly once.
+- [x] `go test ./...` green (no network/credentials); `go vet ./...` clean; `go test -race ./...` clean.
+
+---
+
+## 12. Implementation follow-ups (for M2 — discovered during the build)
+
+Captured from the per-task and final reviews. None affect the M1 deliverable (memory board + `CannedBrain`);
+each is a clean seam confined to the deferred live path.
+
+- **Drain context vs. signal context.** `wazir serve` passes the SIGINT-cancelled `ctx` to the queue
+  workers, so in-flight handlers see `context.Canceled` during a graceful drain. Harmless on the memory
+  board / `CannedBrain`; on the live GitHub path it would route the draining card down the failure path.
+  Give the queue a drain context decoupled from the signal when the real brain is wired.
+- **`BrainstormResult` has no error/`failed` channel.** `PlanResult`/`ExecuteResult` carry `Error` and a
+  `failed` status, but a brainstorm turn can only signal failure via the `error` return. Add an `Error`
+  field (and a `failed` status) when the real `claude` runner — which *can* fail a brainstorm — replaces
+  `CannedBrain`.
+- **`BuildTranscript` whitespace.** The body→comments separator varies with trailing newlines in the
+  card body. Irrelevant to `CannedBrain` (which ignores the transcript); tidy (e.g. `strings.TrimRight`
+  the body) when the real prompt format matters in M2.
+- **GitHub `GetCard` phase resolution + label approval parsing** (already §10) — the live `serve` path
+  resolves every card to `ActNone` until `GetCard` populates `Phase` from the item's `Status`.
