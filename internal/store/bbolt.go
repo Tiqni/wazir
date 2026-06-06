@@ -3,18 +3,22 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
 
 var (
-	bucketBoards = []byte("boards")
-	bucketCards  = []byte("cards")
+	bucketBoards     = []byte("boards")
+	bucketCards      = []byte("cards")
+	bucketDeliveries = []byte("deliveries")
+	bucketLocks      = []byte("locks")
 )
 
 // Bbolt is a bbolt-backed Store.
 type Bbolt struct {
-	db *bolt.DB
+	db  *bolt.DB
+	now func() time.Time
 }
 
 // OpenBbolt opens (creating if needed) a bbolt store at path.
@@ -24,7 +28,7 @@ func OpenBbolt(path string) (*Bbolt, error) {
 		return nil, fmt.Errorf("open bbolt %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketBoards, bucketCards} {
+		for _, b := range [][]byte{bucketBoards, bucketCards, bucketDeliveries, bucketLocks} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -35,7 +39,7 @@ func OpenBbolt(path string) (*Bbolt, error) {
 		db.Close()
 		return nil, fmt.Errorf("init buckets: %w", err)
 	}
-	return &Bbolt{db: db}, nil
+	return &Bbolt{db: db, now: time.Now}, nil
 }
 
 func (s *Bbolt) GetBoard(projectID string) (BoardRecord, bool, error) {
@@ -59,6 +63,72 @@ func (s *Bbolt) PutCard(issueNodeID string, rec CardRecord) error {
 }
 
 func (s *Bbolt) Close() error { return s.db.Close() }
+
+func (s *Bbolt) SeenDelivery(id string) (bool, error) {
+	var seen bool
+	err := s.db.View(func(tx *bolt.Tx) error {
+		seen = tx.Bucket(bucketDeliveries).Get([]byte(id)) != nil
+		return nil
+	})
+	return seen, err
+}
+
+func (s *Bbolt) MarkDelivery(id string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDeliveries).Put([]byte(id), []byte{1})
+	})
+}
+
+// lockValue is the JSON shape stored in the locks bucket.
+type lockValue struct {
+	Owner     string `json:"owner"`
+	ExpiresAt int64  `json:"expires_at"` // unix nanoseconds
+}
+
+func (s *Bbolt) AcquireLock(cardID, owner string, ttl time.Duration) (bool, error) {
+	acquired := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		now := s.now()
+		b := tx.Bucket(bucketLocks)
+		if data := b.Get([]byte(cardID)); data != nil {
+			var lv lockValue
+			if err := json.Unmarshal(data, &lv); err != nil {
+				return err
+			}
+			if lv.Owner != owner && now.UnixNano() < lv.ExpiresAt {
+				return nil // held by someone else, not expired
+			}
+		}
+		out, err := json.Marshal(lockValue{Owner: owner, ExpiresAt: now.Add(ttl).UnixNano()})
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte(cardID), out); err != nil {
+			return err
+		}
+		acquired = true // only after a successful write
+		return nil
+	})
+	return acquired, err
+}
+
+func (s *Bbolt) ReleaseLock(cardID, owner string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketLocks)
+		data := b.Get([]byte(cardID))
+		if data == nil {
+			return nil
+		}
+		var lv lockValue
+		if err := json.Unmarshal(data, &lv); err != nil {
+			return err
+		}
+		if lv.Owner == owner {
+			return b.Delete([]byte(cardID))
+		}
+		return nil
+	})
+}
 
 func (s *Bbolt) put(bucket []byte, key string, v any) error {
 	data, err := json.Marshal(v)

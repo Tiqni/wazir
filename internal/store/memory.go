@@ -1,17 +1,34 @@
 package store
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Memory is an in-memory Store for tests.
 type Memory struct {
-	mu     sync.Mutex
-	boards map[string]BoardRecord
-	cards  map[string]CardRecord
+	mu         sync.Mutex
+	boards     map[string]BoardRecord
+	cards      map[string]CardRecord
+	deliveries map[string]bool
+	locks      map[string]lockEntry
+	now        func() time.Time
+}
+
+type lockEntry struct {
+	owner     string
+	expiresAt time.Time
 }
 
 // NewMemory returns an empty in-memory Store.
 func NewMemory() *Memory {
-	return &Memory{boards: map[string]BoardRecord{}, cards: map[string]CardRecord{}}
+	return &Memory{
+		boards:     map[string]BoardRecord{},
+		cards:      map[string]CardRecord{},
+		deliveries: map[string]bool{},
+		locks:      map[string]lockEntry{},
+		now:        time.Now,
+	}
 }
 
 func (m *Memory) GetBoard(projectID string) (BoardRecord, bool, error) {
@@ -58,4 +75,37 @@ func (m *Memory) PutCard(issueNodeID string, rec CardRecord) error {
 	return nil
 }
 
+func (m *Memory) SeenDelivery(id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deliveries[id], nil
+}
+
+func (m *Memory) MarkDelivery(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deliveries[id] = true
+	return nil
+}
+
 func (m *Memory) Close() error { return nil }
+
+func (m *Memory) AcquireLock(cardID, owner string, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	if e, ok := m.locks[cardID]; ok && e.owner != owner && now.Before(e.expiresAt) {
+		return false, nil
+	}
+	m.locks[cardID] = lockEntry{owner: owner, expiresAt: now.Add(ttl)}
+	return true, nil
+}
+
+func (m *Memory) ReleaseLock(cardID, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.locks[cardID]; ok && e.owner == owner {
+		delete(m.locks, cardID)
+	}
+	return nil
+}

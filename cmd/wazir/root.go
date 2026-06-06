@@ -36,6 +36,6 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&flagLogLevel, "log-level", "info", "log level (debug|info|warn|error)")
 	pf.StringVar(&flagLogFormat, "log-format", "console", "log format (console|json)")
 
-	root.AddCommand(newProvisionCmd(), newBootstrapCmd(), newCardCmd())
+	root.AddCommand(newProvisionCmd(), newBootstrapCmd(), newCardCmd(), newServeCmd())
 	return root
 }
