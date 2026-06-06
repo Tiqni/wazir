@@ -273,7 +273,8 @@ func (b *GitHubBoard) MoveTo(ctx context.Context, cardID string, phase board.Pha
 }
 
 // GetCard returns the card's issue title/body/comments and repo.
-// Phase resolution from the item's status is an M1 concern (left empty here).
+// Phase resolution from the item's Status is deferred to M2 (left empty here):
+// until then the live serve path resolves every card to ActNone.
 func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, error) {
 	ref, err := b.resolveCard(ctx, cardID)
 	if err != nil {

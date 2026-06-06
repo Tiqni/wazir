@@ -54,7 +54,7 @@ func (w *Worker) Process(ctx context.Context, ev board.Event) error {
 		return nil
 	}
 	if d.Action != ActNone {
-		w.advanceComment(ev, rec)
+		w.advanceComment(ev)
 	}
 	return nil
 }
@@ -165,8 +165,13 @@ func (w *Worker) fail(ctx context.Context, cardID string, cause error) {
 	}
 }
 
-func (w *Worker) advanceComment(ev board.Event, rec store.CardRecord) {
+func (w *Worker) advanceComment(ev board.Event) {
 	if ev.Kind != board.EventCommentAdded || ev.Comment == nil {
+		return
+	}
+	rec, _, err := w.store.GetCard(ev.CardID)
+	if err != nil {
+		w.log.Error("read card record for watermark", zap.String("card", ev.CardID), zap.Error(err))
 		return
 	}
 	rec.LastProcessedCommentID = ev.Comment.ID
