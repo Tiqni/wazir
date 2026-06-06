@@ -71,13 +71,21 @@ func runServe(ctx context.Context, addr string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", server.New(b, st, q, logger))
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
 
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutCtx)
+		if err := srv.Shutdown(shutCtx); err != nil {
+			logger.Error("HTTP shutdown did not drain cleanly", zap.Error(err))
+		}
 	}()
 
 	logger.Info("wazir serve listening", zap.String("addr", addr))
