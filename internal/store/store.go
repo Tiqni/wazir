@@ -2,6 +2,8 @@
 // (init-plan §4.1) so multi-board is a later config change, not a migration.
 package store
 
+import "time"
+
 // BoardRecord is the cached identity of one provisioned board.
 type BoardRecord struct {
 	ProjectNumber int
@@ -30,6 +32,10 @@ type Store interface {
 	// M1 — webhook idempotency (init-plan §7).
 	SeenDelivery(id string) (bool, error)
 	MarkDelivery(id string) error
+
+	// M1 — cross-restart advisory lock with TTL (init-plan §8.7).
+	AcquireLock(cardID, owner string, ttl time.Duration) (acquired bool, err error)
+	ReleaseLock(cardID, owner string) error
 
 	Close() error
 }

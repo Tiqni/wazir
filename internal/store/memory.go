@@ -89,3 +89,23 @@ func (m *Memory) MarkDelivery(id string) error {
 }
 
 func (m *Memory) Close() error { return nil }
+
+func (m *Memory) AcquireLock(cardID, owner string, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	if e, ok := m.locks[cardID]; ok && e.owner != owner && now.Before(e.expiresAt) {
+		return false, nil
+	}
+	m.locks[cardID] = lockEntry{owner: owner, expiresAt: now.Add(ttl)}
+	return true, nil
+}
+
+func (m *Memory) ReleaseLock(cardID, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.locks[cardID]; ok && e.owner == owner {
+		delete(m.locks, cardID)
+	}
+	return nil
+}
