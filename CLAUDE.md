@@ -96,7 +96,9 @@ These constraints are the whole point of the design. Violating them defeats it.
 - **Additive-safe provisioning.** `provision`/`bootstrap` reconcile the `Status` options via
   `updateProjectV2Field`: existing options are re-sent **with their ids** (preserved — cards aren't
   orphaned), missing §3 columns are appended **without** an id (created). The default `Todo`/`In Progress`/`Done`
-  are left in place (a `--prune` flag is deferred).
+  are left in place by default. `--prune` reconciles to *exactly* Wazir's columns (deleting extras,
+  canonical order) but refuses to delete a column that still holds cards (`ErrColumnsOccupied`) unless
+  `--force`; occupancy comes from the `projectsAPI.StatusOptionItemCounts` seam.
 - **Per-card repo resolution.** `resolveCard` (`board.go`): bbolt cache → GraphQL `node()` lookup →
   cache-write, then the repo is checked against the `repos` allow-list (`ErrRepoNotAllowed`). Repo is
   never global config; one board may hold issues from many repos (§4.1). The write paths
