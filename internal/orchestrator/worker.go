@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -52,7 +53,9 @@ func (w *Worker) Process(ctx context.Context, ev board.Event) error {
 		w.fail(ctx, ev.CardID, err)
 		return nil
 	}
-	w.advanceComment(ev, rec)
+	if d.Action != ActNone {
+		w.advanceComment(ev, rec)
+	}
 	return nil
 }
 
@@ -71,7 +74,7 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 	case ActPlan:
 		return w.plan(ctx, card)
 	case ActExecute:
-		return w.executePhase(ctx, card)
+		return w.executePhase(ctx, card, "")
 	default:
 		return fmt.Errorf("unknown action %v", d.Action)
 	}
@@ -84,11 +87,13 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 	}
 	switch res.Status {
 	case NeedsAnswers:
-		body := "I need a few answers before writing the spec:\n"
+		var sb strings.Builder
+		sb.WriteString("I need a few answers before writing the spec:\n")
 		for _, q := range res.Questions {
-			body += "\n- " + q
+			sb.WriteString("\n- ")
+			sb.WriteString(q)
 		}
-		if err := w.board.PostComment(ctx, card.ID, body); err != nil {
+		if err := w.board.PostComment(ctx, card.ID, sb.String()); err != nil {
 			return err
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
@@ -120,11 +125,11 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 		return err
 	}
 	card.Phase = board.PhaseBuilding
-	return w.executePhase(ctx, card)
+	return w.executePhase(ctx, card, res.PlanPath)
 }
 
-func (w *Worker) executePhase(ctx context.Context, card board.Card) error {
-	res, err := w.brain.Execute(ctx, ExecuteInput{Transcript: BuildTranscript(card)})
+func (w *Worker) executePhase(ctx context.Context, card board.Card, planPath string) error {
+	res, err := w.brain.Execute(ctx, ExecuteInput{Transcript: BuildTranscript(card), PlanPath: planPath})
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}

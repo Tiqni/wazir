@@ -28,11 +28,17 @@ func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (Bra
 	return r, nil
 }
 func (s *scriptedBrain) Plan(ctx context.Context, in PlanInput) (PlanResult, error) {
+	if s.err != nil {
+		return PlanResult{}, s.err
+	}
 	r := s.plan[0]
 	s.plan = s.plan[1:]
 	return r, nil
 }
 func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteResult, error) {
+	if s.err != nil {
+		return ExecuteResult{}, s.err
+	}
 	r := s.execute[0]
 	s.execute = s.execute[1:]
 	return r, nil
@@ -152,6 +158,23 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseFailed {
 		t.Errorf("phase = %q, want Failed (M4 forge stub)", card.Phase)
+	}
+}
+
+func TestWorkerActNoneDoesNothing(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhasePRReview})
+	w := NewWorker(b, &fakeForge{}, &scriptedBrain{}, store.NewMemory(), nil)
+
+	// A comment on a PRReview card resolves to ActNone — nothing should change.
+	ev := board.Event{Kind: board.EventCommentAdded, CardID: "I1", Comment: &board.Comment{ID: "h1", IsBot: false}}
+	if err := w.Process(ctx, ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhasePRReview || len(card.Comments) != 0 {
+		t.Errorf("ActNone must not change the card: phase=%q comments=%d", card.Phase, len(card.Comments))
 	}
 }
 
