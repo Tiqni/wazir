@@ -74,7 +74,13 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 	case ActPlan:
 		return w.plan(ctx, card)
 	case ActExecute:
-		return w.executePhase(ctx, card, "")
+		// Direct Building re-entry (crash recovery / re-delivered Building event):
+		// load the plan path persisted by plan() so a real brain can still execute.
+		rec, _, err := w.store.GetCard(card.ID)
+		if err != nil {
+			return fmt.Errorf("read card record %s: %w", card.ID, err)
+		}
+		return w.executePhase(ctx, card, rec.PlanPath)
 	default:
 		return fmt.Errorf("unknown action %v", d.Action)
 	}
@@ -121,6 +127,8 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 	if res.Status != StatusPlanReady {
 		return fmt.Errorf("plan failed: %s", res.Error)
 	}
+	// Persist the plan path so a later Building re-entry (ActExecute) can recover it.
+	w.persistPlanPath(card.ID, res.PlanPath)
 	if err := w.board.MoveTo(ctx, card.ID, board.PhaseBuilding); err != nil {
 		return err
 	}
@@ -177,5 +185,25 @@ func (w *Worker) advanceComment(ev board.Event) {
 	rec.LastProcessedCommentID = ev.Comment.ID
 	if err := w.store.PutCard(ev.CardID, rec); err != nil {
 		w.log.Error("advance last_processed_comment_id", zap.Error(err))
+	}
+}
+
+// persistPlanPath stores the plan path on the card record so a Building re-entry
+// (a re-delivered Building event, or recovery after a crash between Planning and
+// Building) can execute against the right plan. Best-effort: a write failure only
+// affects the durability of a replay, not the in-flight turn (which has the path
+// in hand). Re-reads to merge, preserving the other CardRecord fields.
+func (w *Worker) persistPlanPath(cardID, planPath string) {
+	if planPath == "" {
+		return
+	}
+	rec, _, err := w.store.GetCard(cardID)
+	if err != nil {
+		w.log.Error("read card record for plan path", zap.String("card", cardID), zap.Error(err))
+		return
+	}
+	rec.PlanPath = planPath
+	if err := w.store.PutCard(cardID, rec); err != nil {
+		w.log.Error("persist plan path", zap.Error(err))
 	}
 }

@@ -20,6 +20,7 @@ type CardRecord struct {
 	IssueNumber            int
 	ProjectItemID          string
 	LastProcessedCommentID string // M1: skip re-delivered comment events (§8.7)
+	PlanPath               string // M1: persisted so a Building re-entry/replay still has the plan
 }
 
 // Store is the persistence port.

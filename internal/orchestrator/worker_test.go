@@ -17,6 +17,8 @@ type scriptedBrain struct {
 	plan       []PlanResult
 	execute    []ExecuteResult
 	err        error
+
+	lastExecPlanPath string // records the PlanPath the last Execute call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
@@ -36,6 +38,7 @@ func (s *scriptedBrain) Plan(ctx context.Context, in PlanInput) (PlanResult, err
 	return r, nil
 }
 func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteResult, error) {
+	s.lastExecPlanPath = in.PlanPath
 	if s.err != nil {
 		return ExecuteResult{}, s.err
 	}
@@ -107,14 +110,21 @@ func TestWorkerApprovalRunsPlanBuildPR(t *testing.T) {
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
 	brain := &scriptedBrain{
-		plan:    []PlanResult{{Status: StatusPlanReady}},
+		plan:    []PlanResult{{Status: StatusPlanReady, PlanPath: "docs/plan.md"}},
 		execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}},
 	}
 	ff := &fakeForge{prURL: "https://x/pr/1"}
-	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
+	st := store.NewMemory()
+	w := NewWorker(b, ff, brain, st, nil)
 
 	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhasePlanning}); err != nil {
 		t.Fatalf("Process: %v", err)
+	}
+	if brain.lastExecPlanPath != "docs/plan.md" {
+		t.Errorf("execute got PlanPath %q, want docs/plan.md (threaded from plan)", brain.lastExecPlanPath)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.PlanPath != "docs/plan.md" {
+		t.Errorf("plan path persisted = %q, want docs/plan.md", rec.PlanPath)
 	}
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhasePRReview {
@@ -125,6 +135,27 @@ func TestWorkerApprovalRunsPlanBuildPR(t *testing.T) {
 	}
 	if len(card.Comments) != 1 {
 		t.Errorf("want 1 PR-link comment, got %d", len(card.Comments))
+	}
+}
+
+// A direct Building re-entry (ActExecute) must recover the plan path persisted
+// by an earlier Planning turn, rather than executing against an empty path.
+func TestWorkerExecuteLoadsPersistedPlanPath(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
+	st := store.NewMemory()
+	if err := st.PutCard("I1", store.CardRecord{Repo: "o/r", PlanPath: "docs/plan.md"}); err != nil {
+		t.Fatalf("PutCard: %v", err)
+	}
+	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
+	w := NewWorker(b, &fakeForge{prURL: "https://x/pr/1"}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if brain.lastExecPlanPath != "docs/plan.md" {
+		t.Errorf("execute got PlanPath %q, want the persisted docs/plan.md", brain.lastExecPlanPath)
 	}
 }
 

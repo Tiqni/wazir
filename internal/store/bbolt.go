@@ -103,8 +103,11 @@ func (s *Bbolt) AcquireLock(cardID, owner string, ttl time.Duration) (bool, erro
 		if err != nil {
 			return err
 		}
-		acquired = true
-		return b.Put([]byte(cardID), out)
+		if err := b.Put([]byte(cardID), out); err != nil {
+			return err
+		}
+		acquired = true // only after a successful write
+		return nil
 	})
 	return acquired, err
 }
