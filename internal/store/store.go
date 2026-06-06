@@ -14,9 +14,10 @@ type BoardRecord struct {
 
 // CardRecord maps a card's opaque id to its forge coordinates.
 type CardRecord struct {
-	Repo          string // "owner/name"
-	IssueNumber   int
-	ProjectItemID string
+	Repo                   string // "owner/name"
+	IssueNumber            int
+	ProjectItemID          string
+	LastProcessedCommentID string // M1: skip re-delivered comment events (§8.7)
 }
 
 // Store is the persistence port.
@@ -25,5 +26,10 @@ type Store interface {
 	PutBoard(projectID string, rec BoardRecord) error
 	GetCard(issueNodeID string) (CardRecord, bool, error)
 	PutCard(issueNodeID string, rec CardRecord) error
+
+	// M1 — webhook idempotency (init-plan §7).
+	SeenDelivery(id string) (bool, error)
+	MarkDelivery(id string) error
+
 	Close() error
 }
