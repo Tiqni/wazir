@@ -18,6 +18,10 @@ const botMarker = "<!-- wazir -->"
 // ErrNotProvisioned means the configured board has no cached identity yet.
 var ErrNotProvisioned = errors.New("board/github: board not provisioned")
 
+// ErrColumnsOccupied means prune was asked to delete Status columns that still
+// hold cards. Move the cards or re-run with Force.
+var ErrColumnsOccupied = errors.New("board/github: refusing to delete Status columns that still hold cards")
+
 // GitHubBoard implements board.Board against GitHub Projects v2.
 type GitHubBoard struct {
 	api   projectsAPI
@@ -57,7 +61,21 @@ func (b *GitHubBoard) EnsureProvisioned(ctx context.Context, spec board.BoardSpe
 		}
 	}
 
-	merged, changed := mergeStatusOptions(info.Options, spec.Columns)
+	var (
+		merged  []optionInput
+		changed bool
+	)
+	if spec.Prune {
+		var deleted []statusOption
+		merged, deleted, changed = pruneStatusOptions(info.Options, spec.Columns)
+		if len(deleted) > 0 && !spec.Force {
+			if err := b.guardOccupied(ctx, info.ProjectID, deleted); err != nil {
+				return err
+			}
+		}
+	} else {
+		merged, changed = mergeStatusOptions(info.Options, spec.Columns)
+	}
 	if changed {
 		if err := b.api.UpdateStatusOptions(ctx, info.StatusFieldID, merged); err != nil {
 			return fmt.Errorf("update status options: %w", err)
@@ -90,6 +108,25 @@ func (b *GitHubBoard) EnsureProvisioned(ctx context.Context, spec board.BoardSpe
 	}
 	b.cached = &rec
 	b.projectNodeID = rec.ProjectNodeID
+	return nil
+}
+
+// guardOccupied returns ErrColumnsOccupied if any of the to-be-deleted options
+// still holds cards (so prune can't silently orphan them).
+func (b *GitHubBoard) guardOccupied(ctx context.Context, projectID string, deleted []statusOption) error {
+	counts, err := b.api.StatusOptionItemCounts(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("check column occupancy: %w", err)
+	}
+	var occupied []string
+	for _, d := range deleted {
+		if n := counts[d.ID]; n > 0 {
+			occupied = append(occupied, fmt.Sprintf("%q (%d)", d.Name, n))
+		}
+	}
+	if len(occupied) > 0 {
+		return fmt.Errorf("%w: %s — move the cards or re-run with --force", ErrColumnsOccupied, strings.Join(occupied, ", "))
+	}
 	return nil
 }
 

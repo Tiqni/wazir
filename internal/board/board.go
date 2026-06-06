@@ -96,6 +96,8 @@ type BoardSpec struct {
 	Name    string
 	Columns []Phase
 	Create  bool // true: create the board if absent (provision); false: bootstrap only
+	Prune   bool // true: reconcile to EXACTLY Columns, deleting any other Status option
+	Force   bool // with Prune: delete a column even if it still holds cards
 }
 
 // Board is the kanban control surface. The orchestrator depends only on this.

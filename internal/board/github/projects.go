@@ -38,4 +38,7 @@ type projectsAPI interface {
 	SetItemStatus(ctx context.Context, projectID, itemID, fieldID, optionID string) error
 	ResolveIssue(ctx context.Context, issueNodeID string) (issueRef, error)
 	ListItems(ctx context.Context, projectID, statusFieldID, optionID string) ([]listedItem, error)
+	// StatusOptionItemCounts returns how many items currently sit in each Status
+	// option, keyed by option id. Used by prune to refuse deleting occupied columns.
+	StatusOptionItemCounts(ctx context.Context, projectID string) (map[string]int, error)
 }

@@ -284,4 +284,36 @@ func (g *ghProjects) ListItems(ctx context.Context, projectID, statusFieldID, op
 	return out, nil
 }
 
+// StatusOptionItemCounts counts items per Status option (keyed by option id).
+// Caps at the first 100 items (v1); a column with cards only beyond that window
+// could be undercounted, so prune's guard is best-effort on very large boards.
+func (g *ghProjects) StatusOptionItemCounts(ctx context.Context, projectID string) (map[string]int, error) {
+	var q struct {
+		Node struct {
+			Project struct {
+				Items struct {
+					Nodes []struct {
+						FieldValueByName struct {
+							SingleSelect struct {
+								OptionID githubv4.String `graphql:"optionId"`
+							} `graphql:"... on ProjectV2ItemFieldSingleSelectValue"`
+						} `graphql:"fieldValueByName(name: $statusName)"`
+					}
+				} `graphql:"items(first: 100)"`
+			} `graphql:"... on ProjectV2"`
+		} `graphql:"node(id: $id)"`
+	}
+	vars := map[string]any{"id": githubv4.ID(projectID), "statusName": githubv4.String("Status")}
+	if err := g.gql.Query(ctx, &q, vars); err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, n := range q.Node.Project.Items.Nodes {
+		if id := string(n.FieldValueByName.SingleSelect.OptionID); id != "" {
+			counts[id]++
+		}
+	}
+	return counts, nil
+}
+
 var _ projectsAPI = (*ghProjects)(nil)
