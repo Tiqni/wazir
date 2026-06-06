@@ -1,6 +1,6 @@
 module github.com/EmadMokhtar/wazir
 
-go 1.25.0
+go 1.24.0
 
 require (
 	github.com/google/go-github/v66 v66.0.0
@@ -9,7 +9,6 @@ require (
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.28.0
-	golang.org/x/oauth2 v0.36.0
 )
 
 require (
@@ -21,6 +20,7 @@ require (
 	github.com/shurcooL/graphql v0.0.0-20240915155400-7ee5256398cf // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
+	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

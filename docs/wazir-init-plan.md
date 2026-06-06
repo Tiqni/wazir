@@ -257,14 +257,16 @@ type CodeForge interface {
 > CLI = `spf13/cobra`, store = `go.etcd.io/bbolt`. The bullets below keep the original rationale;
 > where M0 diverged it is noted inline.
 
-- **Language/runtime:** Go 1.25+ (the `go` directive was bumped from 1.22 by `golang.org/x/oauth2`).
+- **Language/runtime:** Go 1.24+ (the `go` directive is `1.24.0`; the floor is `testing.T.Chdir` in
+  the config tests. oauth2 was dropped from the code so it no longer forces 1.25 — see Auth below.)
 - **GitHub (implements both ports):**
   - `google/go-github` — REST for issues, comments, PRs, and webhook parsing
     (`github.ValidatePayload`, `github.ParseWebHook`).
   - `shurcooL/githubv4` — typed GraphQL client for **Projects v2**: provisioning
     (`createProjectV2`, single-select option management) and moves (REST can't touch v2 cards).
-  - Auth: `bradleyfalzon/ghinstallation` for GitHub App installation tokens (preferred), or
-    `golang.org/x/oauth2` with a fine-grained PAT for single-user.
+  - Auth: `bradleyfalzon/ghinstallation` for GitHub App installation tokens (preferred, scaffolded).
+    The M0 PAT path is a hand-rolled bearer-token `http.RoundTripper` (no `golang.org/x/oauth2` — it
+    was only setting one header, and pulled in an unused `cloud.google.com/go` transitive + forced Go 1.25).
 - **Claude:** **No official Go SDK** — invoke the `claude` CLI headlessly via `os/exec`
   (`claude -p ... --output-format json`) and unmarshal the JSON envelope. Requires the `claude`
   binary **and the Superpowers plugin** installed on the box.

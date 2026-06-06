@@ -3,20 +3,34 @@ package githubauth
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
 )
 
-func TestPATReturnsClient(t *testing.T) {
+func TestPATClientSetsBearerHeader(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
 	c, err := HTTPClient(context.Background(), config.Config{
-		GitHub: config.GitHubConfig{Auth: "pat", PAT: "tok"},
+		GitHub: config.GitHubConfig{Auth: "pat", PAT: "tok123"},
 	})
 	if err != nil {
 		t.Fatalf("HTTPClient: %v", err)
 	}
-	if c == nil {
-		t.Fatal("expected non-nil client")
+	resp, err := c.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	resp.Body.Close()
+	if gotAuth != "Bearer tok123" {
+		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer tok123")
 	}
 }
 

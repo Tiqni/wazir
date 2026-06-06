@@ -27,7 +27,8 @@ all deterministic GitHub state changes itself. Module: `github.com/EmadMokhtar/w
 
 ## Commands
 
-Go 1.25+ (the `go` directive is `1.25.0`, pulled in transitively by `golang.org/x/oauth2`). There is
+Go 1.24+ (the `go` directive is `1.24.0` — the floor is `testing.T.Chdir` in the config tests, not a
+dependency; oauth2 was dropped so it no longer forces 1.25). There is
 no Makefile or golangci config — `go vet` is the lint.
 
 ```sh
@@ -162,7 +163,8 @@ Planned but absent: `internal/board/memory` (M1 fake), `internal/claude` (M2), `
 
 - `google/go-github` (REST: issues, comments, PRs, webhook parse) and `shurcooL/githubv4` (typed
   GraphQL — **required** for Projects v2; REST can't touch v2 cards).
-- `golang.org/x/oauth2` (PAT) now; `bradleyfalzon/ghinstallation` (GitHub App) scaffolded.
+- PAT auth is a hand-rolled bearer-token `http.RoundTripper` in `internal/githubauth` (no oauth2
+  dependency — it was just setting one header); `bradleyfalzon/ghinstallation` (GitHub App) scaffolded.
 - `go.etcd.io/bbolt` (store), `spf13/cobra` (CLI), `go.uber.org/zap` (logging), `kkyr/fig` (config).
 
 > Note: this set supersedes the init plan's original §5 suggestions (`caarlos0/env`, `log/slog`,
