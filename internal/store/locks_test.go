@@ -23,6 +23,11 @@ func testLock(t *testing.T, s Store, setClock func(Store, func() time.Time)) {
 	base := time.Unix(1_000_000, 0)
 	setClock(s, func() time.Time { return base })
 
+	// Releasing a never-locked key is a no-op, not an error.
+	if err := s.ReleaseLock("never-locked", "w1"); err != nil {
+		t.Fatalf("release non-existent key: %v", err)
+	}
+
 	// First acquire succeeds.
 	if ok, err := s.AcquireLock("A", "w1", time.Minute); err != nil || !ok {
 		t.Fatalf("first acquire: ok=%v err=%v", ok, err)
@@ -53,5 +58,9 @@ func testLock(t *testing.T, s Store, setClock func(Store, func() time.Time)) {
 	}
 	if ok, _ := s.AcquireLock("A", "w1", time.Minute); !ok {
 		t.Error("lock should be free after the owner released it")
+	}
+	// Per-card isolation: locking "B" is independent of "A".
+	if ok, _ := s.AcquireLock("B", "w9", time.Minute); !ok {
+		t.Error("locking B should be independent of A")
 	}
 }

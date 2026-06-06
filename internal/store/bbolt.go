@@ -86,9 +86,9 @@ type lockValue struct {
 }
 
 func (s *Bbolt) AcquireLock(cardID, owner string, ttl time.Duration) (bool, error) {
-	now := s.now()
 	acquired := false
 	err := s.db.Update(func(tx *bolt.Tx) error {
+		now := s.now()
 		b := tx.Bucket(bucketLocks)
 		if data := b.Get([]byte(cardID)); data != nil {
 			var lv lockValue
