@@ -37,7 +37,12 @@ type Queue struct {
 	events chan board.Event
 	wg     sync.WaitGroup
 
+	closeMu sync.RWMutex
+	closed  bool
+
 	mu    sync.Mutex
+	// keyMu holds one mutex per distinct CardID, never evicted. Acceptable for
+	// M1 (card count is bounded by the project board); revisit if boards grow large.
 	keyMu map[string]*sync.Mutex
 }
 
@@ -78,12 +83,30 @@ func (q *Queue) Start(ctx context.Context) {
 	}
 }
 
-// Enqueue submits an event. Safe to call until Shutdown.
-func (q *Queue) Enqueue(ev board.Event) { q.events <- ev }
+// Enqueue submits an event. Blocks if the buffer is full (Buffer events, 128
+// by default) until a worker drains one. Calls after Shutdown are dropped
+// (logged), never panicking.
+func (q *Queue) Enqueue(ev board.Event) {
+	q.closeMu.RLock()
+	defer q.closeMu.RUnlock()
+	if q.closed {
+		q.log.Warn("enqueue after shutdown; dropping event", zap.String("card", ev.CardID))
+		return
+	}
+	q.events <- ev
+}
 
 // Shutdown stops accepting work and waits for in-flight events to finish.
+// Safe to call once; subsequent Enqueue calls drop their events.
 func (q *Queue) Shutdown() {
+	q.closeMu.Lock()
+	if q.closed {
+		q.closeMu.Unlock()
+		return
+	}
+	q.closed = true
 	close(q.events)
+	q.closeMu.Unlock()
 	q.wg.Wait()
 }
 
@@ -116,6 +139,8 @@ func (q *Queue) process(ctx context.Context, ev board.Event) {
 		}
 	}()
 
+	// Worker.Process already logs+handles its own failures; this is a safety net
+	// for handlers that propagate infrastructure errors.
 	if err := q.handler(ctx, ev); err != nil {
 		q.log.Error("handler", zap.String("card", ev.CardID), zap.Error(err))
 	}

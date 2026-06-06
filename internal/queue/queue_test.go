@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,6 +69,18 @@ func TestQueueConcurrentDifferentCards(t *testing.T) {
 	q.Shutdown()
 	if !got["A"] || !got["B"] {
 		t.Errorf("expected both A and B to run concurrently, got %v", got)
+	}
+}
+
+func TestQueueEnqueueAfterShutdownDrops(t *testing.T) {
+	var n int32
+	h := func(ctx context.Context, ev board.Event) error { atomic.AddInt32(&n, 1); return nil }
+	q := New(store.NewMemory(), h, Options{Workers: 1})
+	q.Start(context.Background())
+	q.Shutdown()
+	q.Enqueue(evt("A", "1")) // must not panic
+	if atomic.LoadInt32(&n) != 0 {
+		t.Errorf("handler ran %d times after shutdown, want 0", n)
 	}
 }
 
