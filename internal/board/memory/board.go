@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
 )
@@ -30,13 +29,15 @@ func (b *Board) Seed(c board.Card) {
 }
 
 // AddComment appends an arbitrary comment (test helper for simulating a human
-// reply; PostComment is bot-only).
+// reply; PostComment is bot-only). Panics on an unknown cardID — Seed first.
 func (b *Board) AddComment(cardID string, c board.Comment) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if cc, ok := b.cards[cardID]; ok {
-		cc.Comments = append(cc.Comments, c)
+	cc, ok := b.cards[cardID]
+	if !ok {
+		panic(fmt.Sprintf("memory: AddComment: card %s not found", cardID))
 	}
+	cc.Comments = append(cc.Comments, c)
 }
 
 func (b *Board) EnsureProvisioned(ctx context.Context, spec board.BoardSpec) error { return nil }
@@ -71,11 +72,10 @@ func (b *Board) PostComment(ctx context.Context, cardID, body string) error {
 		return fmt.Errorf("memory: card %s not found", cardID)
 	}
 	c.Comments = append(c.Comments, board.Comment{
-		ID:      fmt.Sprintf("bot%d", len(c.Comments)+1),
-		Author:  "wazir-bot",
-		IsBot:   true,
-		Body:    body,
-		Created: time.Time{},
+		ID:     fmt.Sprintf("bot%d", len(c.Comments)+1),
+		Author: "wazir-bot",
+		IsBot:  true,
+		Body:   body,
 	})
 	return nil
 }

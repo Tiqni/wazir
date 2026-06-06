@@ -79,3 +79,35 @@ func TestMemoryBoardMissingCardErrors(t *testing.T) {
 		t.Error("GetCard on a missing card should error")
 	}
 }
+
+func TestMemoryBoardMissingCardWriteErrors(t *testing.T) {
+	b := New()
+	ctx := context.Background()
+	if err := b.PostComment(ctx, "nope", "x"); err == nil {
+		t.Error("PostComment on missing card should error")
+	}
+	if err := b.SetBody(ctx, "nope", "x"); err == nil {
+		t.Error("SetBody on missing card should error")
+	}
+	if err := b.MoveTo(ctx, "nope", board.PhaseInbox); err == nil {
+		t.Error("MoveTo on missing card should error")
+	}
+}
+
+func TestMemoryBoardParseEventWithComment(t *testing.T) {
+	b := New()
+	in := board.Event{
+		Kind:    board.EventCommentAdded,
+		CardID:  "I1",
+		Dedup:   "d2",
+		Comment: &board.Comment{ID: "h1", Author: "alice", IsBot: false, Body: "hi"},
+	}
+	payload, _ := json.Marshal(in)
+	got, err := b.ParseEvent(nil, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if got.Comment == nil || got.Comment.ID != "h1" || got.Comment.Body != "hi" || got.Comment.IsBot {
+		t.Errorf("ParseEvent comment = %+v, want round-tripped h1/hi/human", got.Comment)
+	}
+}
