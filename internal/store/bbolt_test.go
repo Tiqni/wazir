@@ -15,7 +15,7 @@ func TestBboltPersistsAcrossReopen(t *testing.T) {
 	if err := s1.PutBoard("P1", BoardRecord{ProjectNodeID: "P1", Options: map[string]string{"Done": "o9"}}); err != nil {
 		t.Fatalf("PutBoard: %v", err)
 	}
-	if err := s1.PutCard("I1", CardRecord{Repo: "o/r", IssueNumber: 3}); err != nil {
+	if err := s1.PutCard("I1", CardRecord{Repo: "o/r", IssueNumber: 3, LastProcessedCommentID: "c42"}); err != nil {
 		t.Fatalf("PutCard: %v", err)
 	}
 	if err := s1.Close(); err != nil {
@@ -35,5 +35,8 @@ func TestBboltPersistsAcrossReopen(t *testing.T) {
 	c, ok, _ := s2.GetCard("I1")
 	if !ok || c.Repo != "o/r" {
 		t.Errorf("GetCard after reopen = %+v ok=%v", c, ok)
+	}
+	if c.LastProcessedCommentID != "c42" {
+		t.Errorf("LastProcessedCommentID after reopen = %q, want c42", c.LastProcessedCommentID)
 	}
 }

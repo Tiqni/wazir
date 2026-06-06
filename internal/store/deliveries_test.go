@@ -33,6 +33,35 @@ func testDeliveryDedupe(t *testing.T, s Store) {
 	}
 }
 
+func TestDeliveryDedupeBboltPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wazir.db")
+
+	s1, err := OpenBbolt(path)
+	if err != nil {
+		t.Fatalf("OpenBbolt: %v", err)
+	}
+	if err := s1.MarkDelivery("d1"); err != nil {
+		t.Fatalf("MarkDelivery: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := OpenBbolt(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+
+	seen, err := s2.SeenDelivery("d1")
+	if err != nil {
+		t.Fatalf("SeenDelivery after reopen: %v", err)
+	}
+	if !seen {
+		t.Error("d1 should be seen after bbolt reopen")
+	}
+}
+
 func TestLastProcessedCommentIDRoundTrips(t *testing.T) {
 	s := NewMemory()
 	if err := s.PutCard("I1", CardRecord{Repo: "o/r", LastProcessedCommentID: "c9"}); err != nil {
