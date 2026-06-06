@@ -11,6 +11,7 @@ go.work
 go.work.sum
 /wazir
 /wazird
+/wazir.yaml
 /bin/
 vendor/
 coverage.out

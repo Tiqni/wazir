@@ -253,24 +253,35 @@ type CodeForge interface {
 
 ## 5. Tech stack (Go; libraries swappable)
 
-- **Language/runtime:** Go 1.22+.
+> **M0 settled these swappable choices:** config = `kkyr/fig`, logging = `go.uber.org/zap`,
+> CLI = `spf13/cobra`, store = `go.etcd.io/bbolt`. The bullets below keep the original rationale;
+> where M0 diverged it is noted inline.
+
+- **Language/runtime:** Go 1.24+ (the `go` directive is `1.24.0`; the floor is `testing.T.Chdir` in
+  the config tests. oauth2 was dropped from the code so it no longer forces 1.25 — see Auth below.)
 - **GitHub (implements both ports):**
   - `google/go-github` — REST for issues, comments, PRs, and webhook parsing
     (`github.ValidatePayload`, `github.ParseWebHook`).
   - `shurcooL/githubv4` — typed GraphQL client for **Projects v2**: provisioning
     (`createProjectV2`, single-select option management) and moves (REST can't touch v2 cards).
-  - Auth: `bradleyfalzon/ghinstallation` for GitHub App installation tokens (preferred), or
-    `golang.org/x/oauth2` with a fine-grained PAT for single-user.
+  - Auth: `bradleyfalzon/ghinstallation` for GitHub App installation tokens (preferred, scaffolded).
+    The M0 PAT path is a hand-rolled bearer-token `http.RoundTripper` (no `golang.org/x/oauth2` — it
+    was only setting one header, and pulled in an unused `cloud.google.com/go` transitive + forced Go 1.25).
 - **Claude:** **No official Go SDK** — invoke the `claude` CLI headlessly via `os/exec`
   (`claude -p ... --output-format json`) and unmarshal the JSON envelope. Requires the `claude`
   binary **and the Superpowers plugin** installed on the box.
-- **Persistence:** SQLite via `modernc.org/sqlite` (pure Go, no cgo) behind `database/sql`; or
-  `go.etcd.io/bbolt` if you'd rather have a dependency-free embedded KV store.
+- **Persistence:** **`go.etcd.io/bbolt`** (chosen for M0 — dependency-free embedded KV). SQLite via
+  `modernc.org/sqlite` (pure Go, no cgo, behind `database/sql`) remains an option if relational
+  queries are wanted later.
 - **Concurrency / queue:** native goroutines + channels. Serialize per issue with a keyed mutex map
   (`map[string]*sync.Mutex` guarded by a mutex) or one worker goroutine per issue id. No Redis/broker
   needed for a side project.
-- **Webhook server:** `net/http` stdlib (optionally a router like `go-chi/chi`).
-- **Config:** `caarlos0/env` or `kelseyhightower/envconfig` over plain `os.Getenv`.
+- **Webhook server:** `net/http` stdlib (optionally a router like `go-chi/chi`) — M1.
+- **Config:** **`kkyr/fig`** — an optional `wazir.yaml` (nested sections) with `WAZIR_<SECTION>_<FIELD>`
+  env overrides; runs env-only when no file is present. (Replaces the original `caarlos0/env` plan.)
+- **CLI:** **`spf13/cobra`** — `provision` / `bootstrap` / `card` commands with persistent
+  `--config` / `--log-level` / `--log-format` flags.
+- **Logging:** **`go.uber.org/zap`** (structured; `console` or `json`).
 - **Hosting:** a single cheap always-on box (the orchestrator must hold the repo clone + worktrees and
   shell out to `claude`). A laptop is fine for v1.
 
@@ -532,7 +543,7 @@ Build in independently shippable, testable slices (fits a TDD/Superpowers flow).
 - **M4 — Worktree + plan + execute.** Worktree via the `CodeForge` port, `write-plan`, `execute-plan`,
   push branch, open PR. *Demo: an approved spec produces a real PR.*
 - **M5 — Hardening.** Failure column + error reporting, retries/backoff, cost logging, prompt-injection
-  guardrails, permission scoping, structured logging (`log/slog`), a `/runs` status endpoint.
+  guardrails, permission scoping, structured logging (`go.uber.org/zap`), a `/runs` status endpoint.
 - **M6 (optional) — Polish & second provider.** Tune concurrency, a tiny dashboard, configurable column
   names, multi-repo support. Optionally prove the abstraction by writing a second `Board` impl
   (e.g. Linear) — if M0–M5 leaked no provider types into the core, this is purely additive.

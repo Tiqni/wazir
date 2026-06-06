@@ -1,0 +1,33 @@
+# Wazir configuration — copy to wazir.yaml and edit.
+#
+# Any field can be overridden by an environment variable named
+# WAZIR_<SECTION>_<FIELD>, e.g. WAZIR_PROJECT_NUMBER or WAZIR_GITHUB_OWNER_TYPE.
+# Secrets are best supplied via env rather than committed to a file:
+#   export WAZIR_GITHUB_PAT=...             # overrides github.pat
+#   export WAZIR_GITHUB_WEBHOOK_SECRET=...  # overrides github.webhook_secret
+#
+# A config file is optional: with none present, Wazir reads everything from
+# the environment (plus the defaults shown below).
+
+github:
+  auth: pat # pat | app
+  owner_type: user # user | org
+  # pat: ""              # prefer WAZIR_GITHUB_PAT
+  # webhook_secret: ""   # prefer WAZIR_GITHUB_WEBHOOK_SECRET (used by ParseEvent)
+  # app_id: 0            # for auth: app (wired in M1+)
+  # private_key: ""
+  # installation_id: 0
+
+project:
+  owner: your-login # the user/org login that owns the board
+  number: 1 # Projects v2 board number
+  board_name: Wazir # name used by `provision` when creating the board
+
+# Repos Wazir is allowed to act on (multi-repo allow-list).
+repos:
+  - your-login/your-repo
+
+bot_login: your-bot-login # filters the bot's own webhook events
+
+store:
+  db_path: wazir.db
