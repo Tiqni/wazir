@@ -3,6 +3,7 @@
 package server
 
 import (
+	"errors"
 	"io"
 	"net/http"
 
@@ -40,7 +41,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
-		http.Error(w, "read body", http.StatusBadRequest)
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "read body", http.StatusBadRequest)
+		}
 		return
 	}
 	headers := make(map[string]string, len(r.Header))
@@ -59,6 +65,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if ev.Dedup == "" {
+		h.log.Warn("event missing delivery id; dropping", zap.String("card", ev.CardID))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	seen, err := h.store.SeenDelivery(ev.Dedup)
 	if err != nil {
@@ -71,6 +82,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	// Best-effort: a mark failure means a replay of this delivery may enqueue
+	// twice; the worker's phase gating + LastProcessedCommentID are a second layer.
 	if err := h.store.MarkDelivery(ev.Dedup); err != nil {
 		h.log.Error("mark delivery", zap.Error(err))
 	}

@@ -111,3 +111,24 @@ func (noForge) PushBranch(ctx context.Context, repo, branch string) error       
 func (noForge) OpenPR(ctx context.Context, repo, branch, base, t, b string) (string, error) {
 	return "", nil
 }
+
+func TestReceiverRejectsGet(t *testing.T) {
+	h := server.New(memboard.New(), store.NewMemory(), &capture{}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("code = %d, want 405", rr.Code)
+	}
+}
+
+func TestReceiverRejectsOversizeBody(t *testing.T) {
+	h := server.New(memboard.New(), store.NewMemory(), &capture{}, nil)
+	big := bytes.Repeat([]byte("x"), 1<<20+1)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(big))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("code = %d, want 413", rr.Code)
+	}
+}
