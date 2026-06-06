@@ -7,6 +7,10 @@ type Resolver struct{}
 
 // Resolve decides the action for one event against the card's current phase.
 func (Resolver) Resolve(card board.Card, ev board.Event, lastCommentID string) Decision {
+	// A comment event with no comment payload is malformed — ignore it.
+	if ev.Kind == board.EventCommentAdded && ev.Comment == nil {
+		return Decision{ActNone}
+	}
 	// Bot-authored comments never drive work (loop prevention, §8.1).
 	if ev.Kind == board.EventCommentAdded && ev.Comment != nil && ev.Comment.IsBot {
 		return Decision{ActNone}

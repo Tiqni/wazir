@@ -33,6 +33,7 @@ func TestResolverTable(t *testing.T) {
 		{"done -> none", board.PhaseDone, board.Event{Kind: board.EventCommentAdded, Comment: humanComment}, "", ActNone},
 		{"failed -> none", board.PhaseFailed, board.Event{Kind: board.EventPhaseChanged}, "", ActNone},
 		{"already-processed comment -> none", board.PhaseAwaitingAnswers, board.Event{Kind: board.EventCommentAdded, Comment: humanComment}, "h1", ActNone},
+		{"awaiting + nil-comment event -> none", board.PhaseAwaitingAnswers, board.Event{Kind: board.EventCommentAdded}, "", ActNone},
 	}
 
 	var r Resolver
