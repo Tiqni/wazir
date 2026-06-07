@@ -49,4 +49,12 @@ func TestIntegrationProvision(t *testing.T) {
 			t.Errorf("phase %s has no option id after provision", p)
 		}
 	}
+
+	// ItemStatus / Phase resolution note (M2):
+	// The ItemStatus seam and phaseFromOption helper are covered by unit tests
+	// (TestGetCardPopulatesPhaseFromStatus, TestGetCardEmptyPhaseWhenItemNotOnBoard)
+	// with the fakeAPI in board_test.go. Live coverage of ItemStatus is exercised
+	// via GetCard once a card is on the board — no extra live assertion is added
+	// here because seeding a card with a known Status requires additional API calls
+	// that duplicate the unit coverage without adding signal.
 }
