@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -32,17 +33,17 @@ func TestBuildTranscriptTagsAuthors(t *testing.T) {
 
 func TestBrainstormResultHasFailureChannel(t *testing.T) {
 	r := BrainstormResult{Status: BrainstormFailed, Error: "claude exited 1"}
-	if r.Status != "failed" || r.Error == "" {
+	if r.Status != BrainstormFailed || r.Error == "" {
 		t.Errorf("BrainstormResult failure channel missing: %+v", r)
 	}
 }
 
 func TestErrPhaseRequiresWorktreeIsSentinel(t *testing.T) {
-	wrapped := errors.New("plan: " + ErrPhaseRequiresWorktree.Error())
-	if !errors.Is(ErrPhaseRequiresWorktree, ErrPhaseRequiresWorktree) {
-		t.Fatal("sentinel must match itself")
+	// The Worker wraps the sentinel with %w; errors.Is must survive that chain.
+	wrapped := fmt.Errorf("plan: %w", ErrPhaseRequiresWorktree)
+	if !errors.Is(wrapped, ErrPhaseRequiresWorktree) {
+		t.Fatal("ErrPhaseRequiresWorktree must survive errors.Is through a wrapping chain")
 	}
-	_ = wrapped
 }
 
 func TestBuildTranscriptTrimsTrailingBodyNewlines(t *testing.T) {
