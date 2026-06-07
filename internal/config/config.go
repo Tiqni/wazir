@@ -37,6 +37,8 @@ type ClaudeConfig struct {
 	PlanTimeout         time.Duration `fig:"plan_timeout" default:"10m"`       // WAZIR_CLAUDE_PLAN_TIMEOUT
 	ExecuteTimeout      time.Duration `fig:"execute_timeout" default:"30m"`    // WAZIR_CLAUDE_EXECUTE_TIMEOUT
 	ExecuteAllowedTools string        `fig:"execute_allowed_tools" default:"Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"`
+	PluginDir           string        `fig:"plugin_dir"`      // WAZIR_CLAUDE_PLUGIN_DIR ("" = serve auto-discovers)
+	SettingSources      string        `fig:"setting_sources"` // WAZIR_CLAUDE_SETTING_SOURCES (spike-pinned; "" = flag omitted)
 }
 
 // ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).

@@ -212,3 +212,28 @@ func TestForgeEnvOverrides(t *testing.T) {
 		t.Errorf("ExecuteTimeout = %s, want 12m", c.Claude.ExecuteTimeout)
 	}
 }
+
+func TestClaudeIsolationConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Claude.PluginDir != "" || c.Claude.SettingSources != "" {
+		t.Errorf("isolation fields should default empty, got plugin_dir=%q setting_sources=%q", c.Claude.PluginDir, c.Claude.SettingSources)
+	}
+
+	t.Setenv("WAZIR_CLAUDE_PLUGIN_DIR", "/opt/sp")
+	t.Setenv("WAZIR_CLAUDE_SETTING_SOURCES", "user")
+	c2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c2.Claude.PluginDir != "/opt/sp" || c2.Claude.SettingSources != "user" {
+		t.Errorf("env overrides not applied: plugin_dir=%q setting_sources=%q", c2.Claude.PluginDir, c2.Claude.SettingSources)
+	}
+}
