@@ -64,10 +64,10 @@ func runServe(ctx context.Context, addr string) error {
 
 	// The queue runs on a context decoupled from the SIGINT signal so a graceful
 	// drain lets in-flight claude turns finish (bounded by the per-turn timeout)
-	// instead of cancelling them mid-flight. Defers run LIFO: Shutdown drains
-	// (queueCtx still live), then cancelQueue releases it.
+	// instead of cancelling them mid-flight. A single defer pins the order
+	// (drain while queueCtx is live, then release it) so it can't be broken by a
+	// future reorder, and still runs on every return path.
 	queueCtx, cancelQueue := context.WithCancel(context.Background())
-	defer cancelQueue()
 
 	q := queue.New(st, worker.Process, queue.Options{
 		Workers: 4,
@@ -76,7 +76,10 @@ func runServe(ctx context.Context, addr string) error {
 		Logger:  logger,
 	})
 	q.Start(queueCtx)
-	defer q.Shutdown()
+	defer func() {
+		q.Shutdown()  // drain in-flight turns while queueCtx is still live
+		cancelQueue() // then release the queue context
+	}()
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", server.New(b, st, q, logger))
