@@ -160,11 +160,17 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
 	case SpecReady:
+		priorTurns := rec.BrainstormTurns
 		rec.BrainstormTurns = 0
 		if err := w.store.PutCard(card.ID, rec); err != nil {
 			w.log.Error("reset brainstorm turns", zap.String("card", card.ID), zap.Error(err))
 		}
 		if err := w.board.SetBody(ctx, card.ID, res.SpecMarkdown); err != nil {
+			return err
+		}
+		// Make the "jumped straight to a spec" decision visible on the board, so a
+		// human isn't left wondering why no clarifying questions were asked.
+		if err := w.board.PostComment(ctx, card.ID, specReadyNote(priorTurns)); err != nil {
 			return err
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseSpecReview)
@@ -299,6 +305,22 @@ func (w *Worker) persistPlanPath(cardID, planPath string) {
 	if err := w.store.PutCard(cardID, rec); err != nil {
 		w.log.Error("persist plan path", zap.Error(err))
 	}
+}
+
+// specReadyNote explains why the card advanced to Spec Review — either the idea was
+// clear enough to spec directly (no question round), or the spec came after N rounds.
+// Posted as a board comment so the transition is transparent to a human reviewer.
+func specReadyNote(priorTurns int) string {
+	if priorTurns == 0 {
+		return "📝 The idea looked clear enough to spec directly, so I skipped the clarifying-question round. " +
+			"The spec is in the issue description above — review it, then move the card to Planning to approve, or comment with changes."
+	}
+	rounds := "round"
+	if priorTurns != 1 {
+		rounds += "s"
+	}
+	return fmt.Sprintf("📝 Spec ready after %d clarifying %s. "+
+		"The spec is in the issue description above — review it, then move the card to Planning to approve, or comment with changes.", priorTurns, rounds)
 }
 
 // branchName is the deterministic, orchestrator-owned feature branch for a card.
