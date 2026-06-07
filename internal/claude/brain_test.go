@@ -132,6 +132,16 @@ func TestExecuteComplete(t *testing.T) {
 	if res.Status != orchestrator.StatusComplete || res.Branch != "feature/issue-7-x" || len(res.Commits) != 1 {
 		t.Errorf("res = %+v", res)
 	}
+	if pwd, _ := os.ReadFile(bin + ".pwd"); func() bool {
+		got := strings.TrimSpace(string(pwd))
+		// Resolve symlinks on both sides so the macOS /var→/private/var symlink doesn't
+		// cause spurious mismatches (t.TempDir returns /var/…; pwd resolves to /private/var/…).
+		gotReal, _ := filepath.EvalSymlinks(got)
+		wtReal, _ := filepath.EvalSymlinks(wt)
+		return gotReal != wtReal
+	}() {
+		t.Errorf("cmd.Dir = %q, want worktree %q", strings.TrimSpace(string(pwd)), wt)
+	}
 	args, _ := os.ReadFile(bin + ".args")
 	if !strings.Contains(string(args), "/superpowers:execute-plan") {
 		t.Errorf("execute prompt must invoke the execute-plan slash command; args:\n%s", args)
@@ -150,6 +160,20 @@ func TestPlanFailsClosedOnBadOutput(t *testing.T) {
 	}
 	if res.Status != orchestrator.StatusFailed || res.Error == "" {
 		t.Errorf("want failed+error, got %+v", res)
+	}
+}
+
+func TestPlanFailsOnWrongPhase(t *testing.T) {
+	// Valid status but the contract's phase is "brainstorm" — must fail closed.
+	result := "```json\n{\"phase\":\"brainstorm\",\"status\":\"plan_ready\",\"plan_path\":\"docs/plan.md\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, PlanTimeout: 5 * time.Second}, zap.NewNop())
+	res, err := br.Plan(context.Background(), orchestrator.PlanInput{WorktreePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Plan should report failure via result, not error: %v", err)
+	}
+	if res.Status != orchestrator.StatusFailed || res.Error == "" {
+		t.Errorf("wrong phase must fail closed, got %+v", res)
 	}
 }
 
