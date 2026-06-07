@@ -182,6 +182,122 @@ func TestRunnerCuratesEnvDropsSecrets(t *testing.T) {
 	}
 }
 
+func TestRunnerRelocatesConfigDirPerRun(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+
+	readConfigDir := func() string {
+		if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		env, err := os.ReadFile(bin + ".env")
+		if err != nil {
+			t.Fatalf("read env: %v", err)
+		}
+		for _, line := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+				return v
+			}
+		}
+		t.Fatal("CLAUDE_CONFIG_DIR not set in claude child env")
+		return ""
+	}
+
+	first := readConfigDir()
+	tmpRoot, _ := filepath.EvalSymlinks(os.TempDir())
+	// The runner resolves cfgDir via EvalSymlinks before removal, so first is
+	// already the canonical path. Use it directly rather than calling EvalSymlinks
+	// on an already-deleted directory (which returns "" on all platforms).
+	if !strings.HasPrefix(first, tmpRoot) {
+		t.Errorf("config dir %q not under temp root %q", first, tmpRoot)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("config dir %q must be removed after the run (stat err=%v)", first, err)
+	}
+	if second := readConfigDir(); first == second {
+		t.Errorf("config dir must be distinct per run; got %q twice", first)
+	}
+}
+
+func TestRunnerKeepsOAuthTokenAndRealHome(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok-123")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, _ := os.ReadFile(bin + ".env")
+	if !strings.Contains(string(env), "CLAUDE_CODE_OAUTH_TOKEN=tok-123") {
+		t.Errorf("curated env dropped the OAuth token:\n%s", env)
+	}
+	if !strings.Contains(string(env), "HOME="+os.Getenv("HOME")) {
+		t.Errorf("curated env must preserve the real HOME=%q:\n%s", os.Getenv("HOME"), env)
+	}
+}
+
+func TestRunnerPassesPluginAndSettingFlags(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{
+		Prompt: "x", Timeout: 5 * time.Second,
+		PluginDir: "/plugins/superpowers", SettingSources: "user",
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	for _, want := range []string{"--plugin-dir", "/plugins/superpowers", "--setting-sources", "user"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("argv missing %q; got:\n%s", want, args)
+		}
+	}
+}
+
+func TestRunnerRemovesConfigDirOnFailure(t *testing.T) {
+	bin := writeFakeClaude(t, "", 2, 0) // non-zero exit, but env is written first
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	var cfgDir string
+	for _, line := range strings.Split(string(env), "\n") {
+		if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+			cfgDir = v
+		}
+	}
+	if cfgDir == "" {
+		t.Fatal("CLAUDE_CONFIG_DIR not captured")
+	}
+	if _, err := os.Stat(cfgDir); !os.IsNotExist(err) {
+		t.Errorf("config dir %q must be removed even after a failed run (stat err=%v)", cfgDir, err)
+	}
+}
+
+// An inherited CLAUDE_CONFIG_DIR in the daemon's own environment must never reach
+// the claude child: the per-run isolated dir is authoritative. This guards the
+// curatedEnv drop against a future reorder of the prefix check.
+func TestRunnerDropsInheritedConfigDir(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/attacker/config")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if strings.Contains(string(env), "/attacker/config") {
+		t.Errorf("inherited CLAUDE_CONFIG_DIR must be dropped, not passed to the child:\n%s", env)
+	}
+	if !strings.Contains(string(env), "CLAUDE_CONFIG_DIR=") {
+		t.Errorf("the per-run CLAUDE_CONFIG_DIR must still be set in the child env:\n%s", env)
+	}
+}
+
 func boolStr(b bool) string {
 	if b {
 		return "true"

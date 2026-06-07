@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +34,8 @@ type RunSpec struct {
 	AllowedTools    []string
 	DisallowedTools []string
 	PermissionMode  string
+	PluginDir       string // M5: --plugin-dir <path> (plan/execute load Superpowers; brainstorm leaves empty)
+	SettingSources  string // M5: --setting-sources <v> (stops a repo's .claude/settings.json widening tools)
 }
 
 // RunResult is the parsed {"type":"result"} envelope element.
@@ -84,6 +87,12 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if len(spec.DisallowedTools) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(spec.DisallowedTools, ","))
 	}
+	if spec.PluginDir != "" {
+		args = append(args, "--plugin-dir", spec.PluginDir)
+	}
+	if spec.SettingSources != "" {
+		args = append(args, "--setting-sources", spec.SettingSources)
+	}
 
 	cmd := exec.CommandContext(ctx, r.bin, args...)
 	// Always run in an explicit directory. Worktree phases pass the worktree;
@@ -101,7 +110,20 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 		dir = tmp
 	}
 	cmd.Dir = dir
-	cmd.Env = curatedEnv()
+	// Per-run isolated config dir: an empty CLAUDE_CONFIG_DIR means no global
+	// ~/.claude/CLAUDE.md, no globally-enabled plugins, no global MCP, and isolated
+	// session state (parallel-safe). Removed when the run returns, on every path.
+	cfgDir, err := os.MkdirTemp("", "wazir-cfg-")
+	if err != nil {
+		return RunResult{}, fmt.Errorf("create isolated config dir: %w", err)
+	}
+	// Resolve any OS-level symlinks (e.g. /var → /private/var on macOS) so that
+	// callers and tests can compare the path without EvalSymlinks on a deleted dir.
+	if resolved, resolveErr := filepath.EvalSymlinks(cfgDir); resolveErr == nil {
+		cfgDir = resolved
+	}
+	defer os.RemoveAll(cfgDir)
+	cmd.Env = append(curatedEnv(), "CLAUDE_CONFIG_DIR="+cfgDir)
 	// After a context-driven kill, grandchild processes can keep the stdout pipe
 	// open, blocking cmd.Wait past the deadline. WaitDelay bounds that: Go force-
 	// closes the pipes shortly after the kill. It only fires once ctx is done, so
@@ -168,6 +190,9 @@ func curatedEnv() []string {
 	}
 	keepPrefix := []string{"ANTHROPIC_", "CLAUDE_", "XDG_", "LC_", "SSL_CERT"}
 	keep := func(k string) bool {
+		if k == "CLAUDE_CONFIG_DIR" {
+			return false // set per-run by Run, never inherited
+		}
 		if keepExact[k] {
 			return true
 		}
