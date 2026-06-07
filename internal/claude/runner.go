@@ -88,12 +88,20 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if spec.Dir != "" {
 		cmd.Dir = spec.Dir
 	}
+	// After a context-driven kill, grandchild processes can keep the stdout pipe
+	// open, blocking cmd.Wait past the deadline. WaitDelay bounds that: Go force-
+	// closes the pipes shortly after the kill. It only fires once ctx is done, so
+	// the ctx.Err() checks below still attribute the failure correctly.
+	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	switch ctx.Err() {
+	case context.DeadlineExceeded:
 		return RunResult{}, fmt.Errorf("claude timed out after %s (stderr: %s)", spec.Timeout, strings.TrimSpace(stderr.String()))
+	case context.Canceled:
+		return RunResult{}, fmt.Errorf("claude cancelled (stderr: %s)", strings.TrimSpace(stderr.String()))
 	}
 	if runErr != nil {
 		return RunResult{}, fmt.Errorf("claude exec: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))
@@ -110,6 +118,7 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if ev.IsError || (ev.Subtype != "" && ev.Subtype != "success") {
 		return res, fmt.Errorf("claude reported failure: subtype=%q is_error=%v", ev.Subtype, ev.IsError)
 	}
+	r.log.Debug("claude run", zap.Int("duration_ms", res.DurationMS), zap.Float64("cost_usd", res.CostUSD), zap.String("subtype", res.Subtype))
 	return res, nil
 }
 
