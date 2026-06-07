@@ -101,6 +101,21 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 }
 
 func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
+	rec, _, err := w.store.GetCard(card.ID)
+	if err != nil {
+		return fmt.Errorf("read card record %s: %w", card.ID, err)
+	}
+	// Cost circuit breaker: once the question loop has hit the cap, escalate to a
+	// human *without* another (paid) model call. Checked before brain.Brainstorm
+	// so the cap actually prevents spend (spec §6: "no further spend").
+	if rec.BrainstormTurns >= w.maxBrainstormTurns {
+		msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", w.maxBrainstormTurns)
+		if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
+			return err
+		}
+		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
+	}
+
 	res, err := w.brain.Brainstorm(ctx, BrainstormInput{Transcript: BuildTranscript(card)})
 	if err != nil {
 		return fmt.Errorf("brainstorm: %w", err)
@@ -109,17 +124,6 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 	case BrainstormFailed:
 		return fmt.Errorf("brainstorm failed: %s", res.Error)
 	case NeedsAnswers:
-		rec, _, err := w.store.GetCard(card.ID)
-		if err != nil {
-			return fmt.Errorf("read card record %s: %w", card.ID, err)
-		}
-		if rec.BrainstormTurns >= w.maxBrainstormTurns {
-			msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", w.maxBrainstormTurns)
-			if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
-				return err
-			}
-			return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
-		}
 		rec.BrainstormTurns++
 		if err := w.store.PutCard(card.ID, rec); err != nil {
 			return fmt.Errorf("persist brainstorm turn: %w", err)
@@ -135,13 +139,9 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
 	case SpecReady:
-		if rec, _, err := w.store.GetCard(card.ID); err != nil {
-			w.log.Error("reset brainstorm turns: read card record", zap.String("card", card.ID), zap.Error(err))
-		} else {
-			rec.BrainstormTurns = 0
-			if err := w.store.PutCard(card.ID, rec); err != nil {
-				w.log.Error("reset brainstorm turns", zap.String("card", card.ID), zap.Error(err))
-			}
+		rec.BrainstormTurns = 0
+		if err := w.store.PutCard(card.ID, rec); err != nil {
+			w.log.Error("reset brainstorm turns", zap.String("card", card.ID), zap.Error(err))
 		}
 		if err := w.board.SetBody(ctx, card.ID, res.SpecMarkdown); err != nil {
 			return err

@@ -88,6 +88,11 @@ func (c *ClaudeBrain) Brainstorm(ctx context.Context, in orchestrator.Brainstorm
 	if err := json.Unmarshal([]byte(block), &ct); err != nil {
 		return orchestrator.BrainstormResult{Status: orchestrator.BrainstormFailed, Error: fmt.Sprintf("unmarshal contract: %v", err)}, nil
 	}
+	if ct.Phase != "brainstorm" {
+		// Fail closed on CLI/prompt drift: a non-brainstorm contract that happens to
+		// carry a known status must not be silently accepted (§12 CLI-drift guard).
+		return orchestrator.BrainstormResult{Status: orchestrator.BrainstormFailed, Error: fmt.Sprintf("unexpected contract phase %q (want brainstorm)", ct.Phase)}, nil
+	}
 	switch ct.Status {
 	case "needs_answers":
 		if len(ct.Questions) == 0 {

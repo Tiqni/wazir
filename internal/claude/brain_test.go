@@ -57,6 +57,20 @@ func TestBrainstormFailsClosedOnBadOutput(t *testing.T) {
 	}
 }
 
+func TestBrainstormFailsOnWrongPhase(t *testing.T) {
+	// Valid status, but the contract's phase drifted to "plan" — must fail closed.
+	result := "```json\n{\"phase\":\"plan\",\"status\":\"needs_answers\",\"questions\":[\"q?\"],\"spec_markdown\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := newTestBrain(t, bin)
+	res, err := br.Brainstorm(context.Background(), orchestrator.BrainstormInput{Transcript: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Status != orchestrator.BrainstormFailed || !strings.Contains(res.Error, "phase") {
+		t.Errorf("want failed on wrong phase, got %+v", res)
+	}
+}
+
 func TestBrainstormFailsOnCLIError(t *testing.T) {
 	bin := writeFakeClaude(t, "", 1, 0)
 	br := newTestBrain(t, bin)

@@ -19,10 +19,12 @@ type scriptedBrain struct {
 	execute    []ExecuteResult
 	err        error
 
+	brainstormCalls  int    // how many times Brainstorm was invoked
 	lastExecPlanPath string // records the PlanPath the last Execute call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
+	s.brainstormCalls++
 	if s.err != nil {
 		return BrainstormResult{}, s.err
 	}
@@ -286,6 +288,10 @@ func TestWorkerBrainstormCapEscalates(t *testing.T) {
 	}
 	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 2 {
 		t.Errorf("BrainstormTurns = %d, want unchanged 2 (no increment past the cap)", rec.BrainstormTurns)
+	}
+	// The cap must short-circuit BEFORE the (paid) model call — no further spend.
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain called %d times past the cap, want 0 (no further spend)", brain.brainstormCalls)
 	}
 }
 
