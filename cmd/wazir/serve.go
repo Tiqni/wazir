@@ -75,7 +75,8 @@ func runServe(ctx context.Context, addr string) error {
 	})
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
-		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns)
+		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns).
+		WithBase(cfg.Forge.BaseBranch)
 
 	// The queue runs on a context decoupled from the SIGINT signal so a graceful
 	// drain lets in-flight claude turns finish (bounded by the per-turn timeout)

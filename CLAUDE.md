@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **M0 and M1 are implemented and merged to `main`** (ports + GitHub provisioning + CLI; webhook
 receiver + idempotency + queue + in-memory board + orchestrator with the `Brain` port faked by
-`CannedBrain`). **M2 is in progress** on branch `m2-claude-runner`: the real `claude`-CLI brain
-(`internal/claude`) + the live brainstorm loop (M2+M3 collapsed; plan/execute stay M4). See
-`docs/superpowers/specs/2026-06-07-wazir-m2-design.md` and `docs/superpowers/plans/2026-06-07-wazir-m2.md`.
+`CannedBrain`). **M2 is merged to `main`** (the real `claude`-CLI brain + the live brainstorm loop). **M4 is in
+progress** on branch `m4-worktree-plan-execute`: the live forge git operations (clone/worktree/push)
+and real `claude` plan/execute turns inside a per-card worktree, producing a real PR. See
+`docs/superpowers/specs/2026-06-07-wazir-m4-design.md` and `docs/superpowers/plans/2026-06-07-wazir-m4.md`.
 
 Two source-of-truth documents, both worth reading before non-trivial work:
 - **`docs/wazir-init-plan.md`** — the original PRD + technical design + phased plan. Section numbers
@@ -180,8 +181,8 @@ Planned but absent: worktree/plan/execute live path (M4); `runs`/cost persistenc
 ## Build order (§10)
 
 **M0 ✅** ports + GitHub plumbing + provisioning → **M1 ✅** webhook receiver + idempotency + queue +
-in-memory Board → **M2 🚧** Claude Runner (real `claude`-CLI brain + live brainstorm loop; M2+M3
-collapsed; plan/execute deferred to M4) → **M4** worktree + plan + execute + PR → **M5** hardening →
+in-memory Board → **M2 ✅** Claude Runner (real `claude`-CLI brain + live brainstorm loop; M2+M3
+collapsed; plan/execute deferred to M4) → **M4 🚧** worktree + plan + execute + PR (live forge + plan/execute brain; container isolation + budget breaker stay M5) → **M5** hardening →
 **M6** (optional) polish + second provider. Each milestone is independently shippable and testable.
 
 ## Gotchas (§12)
