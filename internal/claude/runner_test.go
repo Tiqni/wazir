@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -295,6 +296,55 @@ func TestRunnerDropsInheritedConfigDir(t *testing.T) {
 	}
 	if !strings.Contains(string(env), "CLAUDE_CONFIG_DIR=") {
 		t.Errorf("the per-run CLAUDE_CONFIG_DIR must still be set in the child env:\n%s", env)
+	}
+}
+
+// Parallel safety is the point of the per-run config dir: concurrent runs must
+// each get their own CLAUDE_CONFIG_DIR (spec §12). Run under -race.
+func TestRunnerConfigDirsDistinctUnderConcurrency(t *testing.T) {
+	const n = 8
+	// Pre-create the fake bins on the test goroutine (writeFakeClaude calls
+	// t.TempDir/t.Fatalf, which must not run in a spawned goroutine).
+	bins := make([]string, n)
+	for i := range bins {
+		bins[i] = writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	}
+	dirs := make([]string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := &Runner{bin: bins[i], log: zap.NewNop()}
+			if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+				t.Errorf("run %d: %v", i, err)
+				return
+			}
+			env, err := os.ReadFile(bins[i] + ".env")
+			if err != nil {
+				t.Errorf("run %d read env: %v", i, err)
+				return
+			}
+			for _, line := range strings.Split(string(env), "\n") {
+				if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+					dirs[i] = v
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	seen := make(map[string]bool, n)
+	for i, d := range dirs {
+		if d == "" {
+			t.Fatalf("run %d had no CLAUDE_CONFIG_DIR", i)
+		}
+		if seen[d] {
+			t.Errorf("config dir %q reused across concurrent runs", d)
+		}
+		seen[d] = true
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("config dir %q not removed after concurrent run", d)
+		}
 	}
 }
 
