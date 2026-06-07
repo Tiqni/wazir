@@ -178,7 +178,7 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 		return fmt.Errorf("read card record %s: %w", card.ID, err)
 	}
 	branch := branchName(rec.IssueNumber, card.Title)
-	if err := w.forge.EnsureClone(ctx, card.Repo); err != nil {
+	if _, err := w.forge.EnsureClone(ctx, card.Repo); err != nil {
 		return fmt.Errorf("ensure clone: %w", err)
 	}
 	wt, err := w.forge.CreateWorktree(ctx, card.Repo, branch)

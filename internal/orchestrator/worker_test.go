@@ -54,17 +54,18 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 // fakeForge satisfies forge.CodeForge and records the op sequence. PushBranch/
 // OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
-	prURL   string
-	pushErr error
-	wtPath  string   // path CreateWorktree returns ("" by default)
-	pushed  bool
-	removed bool
-	calls   []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
+	prURL     string
+	pushErr   error
+	wtPath    string // path CreateWorktree returns ("" by default)
+	clonePath string // path EnsureClone returns ("" by default)
+	pushed    bool
+	removed   bool
+	calls     []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
 }
 
-func (f *fakeForge) EnsureClone(ctx context.Context, repo string) error {
+func (f *fakeForge) EnsureClone(ctx context.Context, repo string) (string, error) {
 	f.calls = append(f.calls, "ensureClone")
-	return nil
+	return f.clonePath, nil
 }
 func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
 	f.calls = append(f.calls, "createWorktree")

@@ -53,10 +53,10 @@ func TestForgeCloneWorktreePushRemove(t *testing.T) {
 	f := newTestForge(t, origin)
 	const repo = "owner/name"
 
-	if err := f.EnsureClone(ctx, repo); err != nil {
+	if _, err := f.EnsureClone(ctx, repo); err != nil {
 		t.Fatalf("EnsureClone: %v", err)
 	}
-	if err := f.EnsureClone(ctx, repo); err != nil {
+	if _, err := f.EnsureClone(ctx, repo); err != nil {
 		t.Fatalf("EnsureClone (idempotent fetch): %v", err)
 	}
 	wt, err := f.CreateWorktree(ctx, repo, "feature/issue-7-x")
@@ -108,7 +108,7 @@ func TestForgeCloneDoesNotPersistToken(t *testing.T) {
 		RemoteURL: func(repo string) string { return origin },
 	})
 	const repo = "owner/name"
-	if err := f.EnsureClone(ctx, repo); err != nil {
+	if _, err := f.EnsureClone(ctx, repo); err != nil {
 		t.Fatalf("EnsureClone: %v", err)
 	}
 	clone, err := f.clonePath(repo)
@@ -135,7 +135,7 @@ func TestForgePushResetsTamperedOrigin(t *testing.T) {
 	origin := seedBareOrigin(t)
 	f := newTestForge(t, origin)
 	const repo = "owner/name"
-	if err := f.EnsureClone(ctx, repo); err != nil {
+	if _, err := f.EnsureClone(ctx, repo); err != nil {
 		t.Fatalf("EnsureClone: %v", err)
 	}
 	wt, err := f.CreateWorktree(ctx, repo, "feature/reset")
