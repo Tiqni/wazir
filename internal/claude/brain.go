@@ -27,6 +27,10 @@ End your response with EXACTLY ONE fenced ` + "```json" + ` block and nothing af
 {"phase":"brainstorm","status":"needs_answers"|"spec_ready","questions":["..."],"spec_markdown":"..."}
 Put ALL human-facing prose inside the JSON fields, never outside the block. Use "needs_answers" with a non-empty "questions" array, or "spec_ready" with a non-empty "spec_markdown".`
 
+// brainstormAllowedTools lets the repo-aware brainstorm turn read the target repo
+// (cwd = the clone) without giving it any write/exec/network capability.
+var brainstormAllowedTools = []string{"Read", "Grep", "Glob"}
+
 // brainstormDisallowedTools keeps the brainstorm turn pure reasoning (M2 spec §5.4).
 var brainstormDisallowedTools = []string{"AskUserQuestion", "Bash", "Edit", "Write", "Task", "WebFetch", "WebSearch"}
 
@@ -82,6 +86,8 @@ type ClaudeBrain struct {
 	planTimeout         time.Duration
 	executeTimeout      time.Duration
 	executeAllowedTools []string
+	pluginDir           string
+	settingSources      string
 	log                 *zap.Logger
 }
 
@@ -99,6 +105,8 @@ func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 		planTimeout:         cfg.PlanTimeout,
 		executeTimeout:      cfg.ExecuteTimeout,
 		executeAllowedTools: splitTools(cfg.ExecuteAllowedTools),
+		pluginDir:           cfg.PluginDir,
+		settingSources:      cfg.SettingSources,
 		log:                 log,
 	}
 }
@@ -124,10 +132,13 @@ func (c *ClaudeBrain) Brainstorm(ctx context.Context, in orchestrator.Brainstorm
 	res, err := c.runner.Run(ctx, RunSpec{
 		Prompt:          in.Transcript,
 		SystemPrompt:    brainstormSystemPrompt,
+		Dir:             in.RepoPath,
 		Model:           c.model,
 		Timeout:         c.timeout,
 		PermissionMode:  "default",
+		AllowedTools:    brainstormAllowedTools,
 		DisallowedTools: brainstormDisallowedTools,
+		SettingSources:  c.settingSources,
 	})
 	if err != nil {
 		return orchestrator.BrainstormResult{Status: orchestrator.BrainstormFailed, Error: err.Error()}, nil
@@ -178,6 +189,8 @@ func (c *ClaudeBrain) Plan(ctx context.Context, in orchestrator.PlanInput) (orch
 		Timeout:        c.planTimeout,
 		AllowedTools:   planAllowedTools,
 		PermissionMode: "acceptEdits",
+		PluginDir:      c.pluginDir,
+		SettingSources: c.settingSources,
 	})
 	if err != nil {
 		return orchestrator.PlanResult{Status: orchestrator.StatusFailed, Error: err.Error()}, nil
@@ -213,6 +226,8 @@ func (c *ClaudeBrain) Execute(ctx context.Context, in orchestrator.ExecuteInput)
 		Timeout:        c.executeTimeout,
 		AllowedTools:   c.executeAllowedTools,
 		PermissionMode: "acceptEdits",
+		PluginDir:      c.pluginDir,
+		SettingSources: c.settingSources,
 	})
 	if err != nil {
 		return orchestrator.ExecuteResult{Status: orchestrator.StatusFailed, Error: err.Error()}, nil

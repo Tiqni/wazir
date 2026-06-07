@@ -193,6 +193,64 @@ func TestClaudeBrainImplementsBrain(t *testing.T) {
 	var _ orchestrator.Brain = (*ClaudeBrain)(nil)
 }
 
+func TestBrainstormRunsInRepoCloneReadOnly(t *testing.T) {
+	result := "```json\n{\"phase\":\"brainstorm\",\"status\":\"needs_answers\",\"questions\":[\"q?\"],\"spec_markdown\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, Timeout: 5 * time.Second, PluginDir: "/sp", SettingSources: "user"}, zap.NewNop())
+	clone := t.TempDir()
+	if _, err := br.Brainstorm(context.Background(), orchestrator.BrainstormInput{Transcript: "x", RepoPath: clone}); err != nil {
+		t.Fatalf("Brainstorm: %v", err)
+	}
+	pwd, _ := os.ReadFile(bin + ".pwd")
+	gotReal, _ := filepath.EvalSymlinks(strings.TrimSpace(string(pwd)))
+	cloneReal, _ := filepath.EvalSymlinks(clone)
+	if gotReal != cloneReal {
+		t.Errorf("brainstorm cmd.Dir = %q, want the repo clone %q", strings.TrimSpace(string(pwd)), clone)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "Read,Grep,Glob") {
+		t.Errorf("brainstorm must allow read-only exploration; args:\n%s", args)
+	}
+	if !strings.Contains(string(args), "--setting-sources") || !strings.Contains(string(args), "user") {
+		t.Errorf("brainstorm must carry --setting-sources; args:\n%s", args)
+	}
+	if strings.Contains(string(args), "--plugin-dir") {
+		t.Errorf("brainstorm must NOT load a plugin; args:\n%s", args)
+	}
+}
+
+func TestPlanAndExecuteLoadPlugin(t *testing.T) {
+	planJSON := "```json\n{\"phase\":\"plan\",\"status\":\"plan_ready\",\"plan_path\":\"docs/plan.md\",\"summary\":\"s\",\"error\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(planJSON, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{
+		Bin: bin, PlanTimeout: 5 * time.Second, ExecuteTimeout: 5 * time.Second,
+		ExecuteAllowedTools: "Read,Edit", PluginDir: "/sp", SettingSources: "user",
+	}, zap.NewNop())
+	if _, err := br.Plan(context.Background(), orchestrator.PlanInput{Spec: "s", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "--plugin-dir") || !strings.Contains(string(args), "/sp") {
+		t.Errorf("plan must carry --plugin-dir; args:\n%s", args)
+	}
+
+	// Execute is the highest-risk phase (it runs code with the plugin), so assert it
+	// loads the plugin too — its own fake bin, since .args is overwritten per run.
+	execJSON := "```json\n{\"phase\":\"execute\",\"status\":\"complete\",\"branch\":\"b\",\"commits\":[\"a\"],\"test_summary\":\"ok\",\"notes\":\"n\",\"error\":\"\"}\n```"
+	execBin := writeFakeClaude(t, envelope(execJSON, false, "success"), 0, 0)
+	brExec := New(config.ClaudeConfig{
+		Bin: execBin, PlanTimeout: 5 * time.Second, ExecuteTimeout: 5 * time.Second,
+		ExecuteAllowedTools: "Read,Edit", PluginDir: "/sp", SettingSources: "user",
+	}, zap.NewNop())
+	if _, err := brExec.Execute(context.Background(), orchestrator.ExecuteInput{PlanPath: "docs/plan.md", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	execArgs, _ := os.ReadFile(execBin + ".args")
+	if !strings.Contains(string(execArgs), "--plugin-dir") || !strings.Contains(string(execArgs), "/sp") {
+		t.Errorf("execute must carry --plugin-dir; args:\n%s", execArgs)
+	}
+}
+
 func TestSplitToolsTrimsAndDropsEmpties(t *testing.T) {
 	got := splitTools("Read, Edit ,, Bash(git:*) ")
 	want := []string{"Read", "Edit", "Bash(git:*)"}
