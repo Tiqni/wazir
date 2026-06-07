@@ -36,9 +36,10 @@ type ClaudeConfig struct {
 	MaxBrainstormTurns  int           `fig:"max_brainstorm_turns" default:"8"` // WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS
 	PlanTimeout         time.Duration `fig:"plan_timeout" default:"10m"`       // WAZIR_CLAUDE_PLAN_TIMEOUT
 	ExecuteTimeout      time.Duration `fig:"execute_timeout" default:"30m"`    // WAZIR_CLAUDE_EXECUTE_TIMEOUT
-	ExecuteAllowedTools string        `fig:"execute_allowed_tools" default:"Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"`
-	PluginDir           string        `fig:"plugin_dir"`      // WAZIR_CLAUDE_PLUGIN_DIR ("" = serve auto-discovers)
-	SettingSources      string        `fig:"setting_sources"` // WAZIR_CLAUDE_SETTING_SOURCES (spike-pinned; "" = flag omitted)
+	ExecuteAllowedTools string        `fig:"execute_allowed_tools" default:"Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"`
+	PluginsDir          string        `fig:"plugins_dir" default:"~/.claude/plugins"`                 // WAZIR_CLAUDE_PLUGINS_DIR — registry symlinked into each plan/execute config dir
+	PluginID            string        `fig:"plugin_id" default:"superpowers@claude-plugins-official"` // WAZIR_CLAUDE_PLUGIN_ID — enabled in the seeded settings.json
+	SettingSources      string        `fig:"setting_sources" default:"user"`                          // WAZIR_CLAUDE_SETTING_SOURCES — excludes a repo's settings.json (spike: "user")
 }
 
 // ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).
@@ -99,6 +100,7 @@ func Load(path string) (Config, error) {
 	}
 	c.Forge.CloneRoot = expandHome(c.Forge.CloneRoot)
 	c.Forge.WorktreeRoot = expandHome(c.Forge.WorktreeRoot)
+	c.Claude.PluginsDir = expandHome(c.Claude.PluginsDir)
 	if err := c.validate(); err != nil {
 		return Config{}, err
 	}

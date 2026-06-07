@@ -125,9 +125,10 @@ These constraints are the whole point of the design. Violating them defeats it.
 With no file present, config comes from env + struct `default:` tags (via `fig.IgnoreFile()`). Secrets
 (PAT, webhook secret) come from env, not the committed file. Entry point: `config.Load(path)`;
 `--config` sets the path. `wazir.example.yaml` is the template; `/wazir.yaml` is gitignored.
-The `claude` section also carries `plugin_dir` / `setting_sources` (env `WAZIR_CLAUDE_PLUGIN_DIR` /
-`WAZIR_CLAUDE_SETTING_SOURCES`); the daemon authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in
-the environment (not the committed file).
+The `claude` section also carries `plugins_dir` (default `~/.claude/plugins`), `plugin_id` (default
+`superpowers@claude-plugins-official`), and `setting_sources` (default `user`) — env
+`WAZIR_CLAUDE_PLUGINS_DIR` / `WAZIR_CLAUDE_PLUGIN_ID` / `WAZIR_CLAUDE_SETTING_SOURCES`. The daemon
+authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in the environment (not the committed file).
 
 ## Testing strategy
 

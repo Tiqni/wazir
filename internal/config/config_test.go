@@ -223,17 +223,24 @@ func TestClaudeIsolationConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.Claude.PluginDir != "" || c.Claude.SettingSources != "" {
-		t.Errorf("isolation fields should default empty, got plugin_dir=%q setting_sources=%q", c.Claude.PluginDir, c.Claude.SettingSources)
+	if !strings.HasSuffix(c.Claude.PluginsDir, ".claude/plugins") || strings.HasPrefix(c.Claude.PluginsDir, "~") {
+		t.Errorf("plugins_dir default = %q, want an expanded path ending in .claude/plugins", c.Claude.PluginsDir)
+	}
+	if c.Claude.PluginID != "superpowers@claude-plugins-official" {
+		t.Errorf("plugin_id default = %q", c.Claude.PluginID)
+	}
+	if c.Claude.SettingSources != "user" {
+		t.Errorf("setting_sources default = %q, want user", c.Claude.SettingSources)
 	}
 
-	t.Setenv("WAZIR_CLAUDE_PLUGIN_DIR", "/opt/sp")
-	t.Setenv("WAZIR_CLAUDE_SETTING_SOURCES", "user")
+	t.Setenv("WAZIR_CLAUDE_PLUGINS_DIR", "/opt/plugins")
+	t.Setenv("WAZIR_CLAUDE_PLUGIN_ID", "custom@mp")
+	t.Setenv("WAZIR_CLAUDE_SETTING_SOURCES", "user,local")
 	c2, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c2.Claude.PluginDir != "/opt/sp" || c2.Claude.SettingSources != "user" {
-		t.Errorf("env overrides not applied: plugin_dir=%q setting_sources=%q", c2.Claude.PluginDir, c2.Claude.SettingSources)
+	if c2.Claude.PluginsDir != "/opt/plugins" || c2.Claude.PluginID != "custom@mp" || c2.Claude.SettingSources != "user,local" {
+		t.Errorf("env overrides not applied: %+v", c2.Claude)
 	}
 }

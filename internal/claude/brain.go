@@ -42,9 +42,10 @@ type brainstormContract struct {
 	SpecMarkdown string   `json:"spec_markdown"`
 }
 
-// Plan/Execute invoke the real Superpowers slash commands headless (validated by
-// the M4 spike). The append-system-prompt forces the §9 JSON contract regardless
-// of the skill's own output, and bans interactive turns.
+// Plan/Execute invoke the Superpowers skills (writing-plans / executing-plans) via
+// the Skill tool, triggered by natural-language intent — skills have no headless
+// slash-command form (M5 spike). The append-system-prompt forces the §9 JSON
+// contract regardless of the skill's own output, and bans interactive turns.
 const planSystemPrompt = `You are the PLAN phase of an automated, human-gated dev-loop orchestrator, running headless inside a git worktree of the target repository. No live human is reachable this turn: do NOT use AskUserQuestion or any interactive tool; if a skill would normally ask the human, proceed using the provided spec. Plan only — do NOT modify source files and do NOT push.
 
 End your FINAL response with EXACTLY ONE fenced ` + "```json" + ` block and nothing after it, matching:
@@ -58,7 +59,8 @@ End your FINAL response with EXACTLY ONE fenced ` + "```json" + ` block and noth
 Use "complete" only if the work is committed; otherwise "failed" with a non-empty "error". Put all prose inside the JSON fields.`
 
 // planAllowedTools keeps the plan turn read-mostly (explore + write the plan file).
-var planAllowedTools = []string{"Read", "Grep", "Glob", "Write", "Edit"}
+// Skill lets the model invoke the writing-plans skill; no Bash (planning doesn't run code).
+var planAllowedTools = []string{"Skill", "Read", "Grep", "Glob", "Write", "Edit"}
 
 type planContract struct {
 	Phase    string `json:"phase"`
@@ -86,7 +88,8 @@ type ClaudeBrain struct {
 	planTimeout         time.Duration
 	executeTimeout      time.Duration
 	executeAllowedTools []string
-	pluginDir           string
+	pluginsDir          string
+	pluginID            string
 	settingSources      string
 	log                 *zap.Logger
 }
@@ -105,7 +108,8 @@ func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 		planTimeout:         cfg.PlanTimeout,
 		executeTimeout:      cfg.ExecuteTimeout,
 		executeAllowedTools: splitTools(cfg.ExecuteAllowedTools),
-		pluginDir:           cfg.PluginDir,
+		pluginsDir:          cfg.PluginsDir,
+		pluginID:            cfg.PluginID,
 		settingSources:      cfg.SettingSources,
 		log:                 log,
 	}
@@ -182,14 +186,15 @@ func (c *ClaudeBrain) Brainstorm(ctx context.Context, in orchestrator.Brainstorm
 // uniformly with its other failure paths.
 func (c *ClaudeBrain) Plan(ctx context.Context, in orchestrator.PlanInput) (orchestrator.PlanResult, error) {
 	res, err := c.runner.Run(ctx, RunSpec{
-		Prompt:         "/superpowers:write-plan Write an implementation plan for this approved spec in the current repository.\n\nApproved spec:\n\n" + in.Spec + "\n\nIssue context:\n\n" + in.Transcript,
+		Prompt:         "Use your writing-plans skill to write an implementation plan for this approved spec in the current repository, saving the plan to a file. Then stop.\n\nApproved spec:\n\n" + in.Spec + "\n\nIssue context:\n\n" + in.Transcript,
 		SystemPrompt:   planSystemPrompt,
 		Dir:            in.WorktreePath,
 		Model:          c.model,
 		Timeout:        c.planTimeout,
 		AllowedTools:   planAllowedTools,
 		PermissionMode: "acceptEdits",
-		PluginDir:      c.pluginDir,
+		PluginsDir:     c.pluginsDir,
+		EnabledPlugin:  c.pluginID,
 		SettingSources: c.settingSources,
 	})
 	if err != nil {
@@ -219,14 +224,15 @@ func (c *ClaudeBrain) Plan(ctx context.Context, in orchestrator.PlanInput) (orch
 // Execute runs one headless execute-plan turn inside the worktree.
 func (c *ClaudeBrain) Execute(ctx context.Context, in orchestrator.ExecuteInput) (orchestrator.ExecuteResult, error) {
 	res, err := c.runner.Run(ctx, RunSpec{
-		Prompt:         "/superpowers:execute-plan Execute the implementation plan at " + in.PlanPath + ". Commit your work on the current branch; do not push or open a PR.\n\nIssue context:\n\n" + in.Transcript,
+		Prompt:         "Use your executing-plans skill to implement the plan at " + in.PlanPath + ". Run the repository's tests and commit your work on the current branch; do not push or open a PR. Then stop.\n\nIssue context:\n\n" + in.Transcript,
 		SystemPrompt:   executeSystemPrompt,
 		Dir:            in.WorktreePath,
 		Model:          c.model,
 		Timeout:        c.executeTimeout,
 		AllowedTools:   c.executeAllowedTools,
 		PermissionMode: "acceptEdits",
-		PluginDir:      c.pluginDir,
+		PluginsDir:     c.pluginsDir,
+		EnabledPlugin:  c.pluginID,
 		SettingSources: c.settingSources,
 	})
 	if err != nil {

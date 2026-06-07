@@ -29,6 +29,9 @@ func writeFakeClaude(t *testing.T, stdout string, exitCode, sleepSecs int) strin
 		"printf '%s\\n' \"$@\" > \"$0.args\"\n" +
 		"pwd > \"$0.pwd\"\n" +
 		"env > \"$0.env\"\n" +
+		// Capture what the runner seeded into the per-run config dir (empty when unseeded).
+		"readlink \"$CLAUDE_CONFIG_DIR/plugins\" > \"$0.plugins\" 2>/dev/null || true\n" +
+		"cat \"$CLAUDE_CONFIG_DIR/settings.json\" > \"$0.settings\" 2>/dev/null || true\n" +
 		sleepLine +
 		"cat <<'WAZIR_EOF'\n" + stdout + "\nWAZIR_EOF\n" +
 		fmt.Sprintf("exit %d\n", exitCode)
@@ -236,20 +239,61 @@ func TestRunnerKeepsOAuthTokenAndRealHome(t *testing.T) {
 	}
 }
 
-func TestRunnerPassesPluginAndSettingFlags(t *testing.T) {
+func TestRunnerSeedsConfigDirForPlanExecute(t *testing.T) {
+	pluginsDir := t.TempDir() // stand-in for the real ~/.claude/plugins registry
 	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
 	r := &Runner{bin: bin, log: zap.NewNop()}
 	if _, err := r.Run(context.Background(), RunSpec{
 		Prompt: "x", Timeout: 5 * time.Second,
-		PluginDir: "/plugins/superpowers", SettingSources: "user",
+		PluginsDir: pluginsDir, EnabledPlugin: "superpowers@claude-plugins-official", SettingSources: "user",
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	// The child saw a CLAUDE_CONFIG_DIR/plugins symlink pointing at the registry...
+	link, _ := os.ReadFile(bin + ".plugins")
+	if strings.TrimSpace(string(link)) != pluginsDir {
+		t.Errorf("seeded plugins symlink = %q, want %q", strings.TrimSpace(string(link)), pluginsDir)
+	}
+	// ...and a settings.json enabling only the configured plugin.
+	settings, _ := os.ReadFile(bin + ".settings")
+	if !strings.Contains(string(settings), `"superpowers@claude-plugins-official":true`) {
+		t.Errorf("seeded settings.json missing enabledPlugins entry; got:\n%s", settings)
+	}
 	args, _ := os.ReadFile(bin + ".args")
-	for _, want := range []string{"--plugin-dir", "/plugins/superpowers", "--setting-sources", "user"} {
-		if !strings.Contains(string(args), want) {
-			t.Errorf("argv missing %q; got:\n%s", want, args)
-		}
+	if !strings.Contains(string(args), "--setting-sources") || !strings.Contains(string(args), "user") {
+		t.Errorf("argv missing --setting-sources user; got:\n%s", args)
+	}
+}
+
+func TestRunnerDoesNotSeedWhenPluginsDirEmpty(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// brainstorm-style run (no PluginsDir): the config dir stays bare — no plugins symlink.
+	link, _ := os.ReadFile(bin + ".plugins")
+	if strings.TrimSpace(string(link)) != "" {
+		t.Errorf("unseeded run must not symlink plugins; got %q", strings.TrimSpace(string(link)))
+	}
+}
+
+func TestSeedConfigDir(t *testing.T) {
+	cfgDir := t.TempDir()
+	pluginsDir := t.TempDir()
+	if err := seedConfigDir(cfgDir, pluginsDir, "superpowers@claude-plugins-official"); err != nil {
+		t.Fatalf("seedConfigDir: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(cfgDir, "plugins"))
+	if err != nil || target != pluginsDir {
+		t.Errorf("plugins symlink = %q (err %v), want %q", target, err, pluginsDir)
+	}
+	settings, err := os.ReadFile(filepath.Join(cfgDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !strings.Contains(string(settings), `"superpowers@claude-plugins-official":true`) {
+		t.Errorf("settings.json missing enabledPlugins entry; got:\n%s", settings)
 	}
 }
 

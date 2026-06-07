@@ -74,18 +74,12 @@ func runServe(ctx context.Context, addr string) error {
 		Base:         cfg.Forge.BaseBranch,
 		Token:        cfg.GitHub.PAT,
 	})
-	// Resolve the Superpowers plugin dir plan/execute load via --plugin-dir under
-	// the per-run isolated config dir. Fail loudly at startup, not mid-turn.
-	if cfg.Claude.PluginDir == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return fmt.Errorf("locate superpowers plugin: cannot determine home dir (set WAZIR_CLAUDE_PLUGIN_DIR): %w", herr)
-		}
-		pluginDir, derr := claude.DiscoverSuperpowersPluginDir(home)
-		if derr != nil {
-			return fmt.Errorf("locate superpowers plugin (set WAZIR_CLAUDE_PLUGIN_DIR): %w", derr)
-		}
-		cfg.Claude.PluginDir = pluginDir
+	// plan/execute seed each per-run config dir with a symlink to this plugin registry
+	// + a settings.json enabling the configured plugin, so the Superpowers skills load
+	// under isolation (M5 spike: --plugin-dir does not register them). Fail loudly at
+	// startup if the registry is missing, not mid-turn.
+	if fi, statErr := os.Stat(cfg.Claude.PluginsDir); statErr != nil || !fi.IsDir() {
+		return fmt.Errorf("claude.plugins_dir %q is not a directory (set WAZIR_CLAUDE_PLUGINS_DIR): %v", cfg.Claude.PluginsDir, statErr)
 	}
 	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		logger.Warn("no claude auth env set (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY); " +

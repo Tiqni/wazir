@@ -34,7 +34,8 @@ type RunSpec struct {
 	AllowedTools    []string
 	DisallowedTools []string
 	PermissionMode  string
-	PluginDir       string // M5: --plugin-dir <path> (plan/execute load Superpowers; brainstorm leaves empty)
+	PluginsDir      string // M5: when set, seed the per-run config dir (symlink registry + settings.json) so the plugin's skills load; empty for brainstorm
+	EnabledPlugin   string // M5: plugin id enabled in the seeded settings.json (e.g. "superpowers@claude-plugins-official")
 	SettingSources  string // M5: --setting-sources <v> (stops a repo's .claude/settings.json widening tools)
 }
 
@@ -87,9 +88,6 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if len(spec.DisallowedTools) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(spec.DisallowedTools, ","))
 	}
-	if spec.PluginDir != "" {
-		args = append(args, "--plugin-dir", spec.PluginDir)
-	}
 	if spec.SettingSources != "" {
 		args = append(args, "--setting-sources", spec.SettingSources)
 	}
@@ -127,6 +125,15 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 			r.log.Warn("remove per-run config dir", zap.String("dir", cfgDir), zap.Error(rmErr))
 		}
 	}()
+	// Plan/execute need the Superpowers skills, which a relocated config dir doesn't
+	// have. Seed it: symlink the real plugin registry in + enable only the configured
+	// plugin (M5 spike: --plugin-dir does not register a marketplace plugin's skills).
+	// Brainstorm leaves PluginsDir empty, so it stays a bare, plugin-free config dir.
+	if spec.PluginsDir != "" {
+		if err := seedConfigDir(cfgDir, spec.PluginsDir, spec.EnabledPlugin); err != nil {
+			return RunResult{}, fmt.Errorf("seed config dir: %w", err)
+		}
+	}
 	cmd.Env = append(curatedEnv(), "CLAUDE_CONFIG_DIR="+cfgDir)
 	// After a context-driven kill, grandchild processes can keep the stdout pipe
 	// open, blocking cmd.Wait past the deadline. WaitDelay bounds that: Go force-
@@ -182,6 +189,28 @@ func parseEnvelope(stdout []byte) (resultEvent, error) {
 		return resultEvent{}, fmt.Errorf("unexpected claude envelope object type %q", obj.Type)
 	}
 	return obj, nil
+}
+
+// seedConfigDir makes a relocated CLAUDE_CONFIG_DIR usable for a plan/execute turn:
+// it symlinks the real plugin registry in and writes a settings.json that enables
+// ONLY enabledPlugin — so the Superpowers skills load while the global
+// ~/.claude/CLAUDE.md and other plugins stay out. (M5 spike: --plugin-dir does not
+// register a marketplace plugin's skills under a relocated config dir; the
+// registration must be present.)
+func seedConfigDir(cfgDir, pluginsDir, enabledPlugin string) error {
+	if err := os.Symlink(pluginsDir, filepath.Join(cfgDir, "plugins")); err != nil {
+		return fmt.Errorf("symlink plugins: %w", err)
+	}
+	settings, err := json.Marshal(map[string]any{
+		"enabledPlugins": map[string]bool{enabledPlugin: true},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "settings.json"), settings, 0o600); err != nil {
+		return fmt.Errorf("write settings.json: %w", err)
+	}
+	return nil
 }
 
 // curatedEnv returns a secret-free environment for the claude child: the vars
