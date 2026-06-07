@@ -112,6 +112,7 @@ func TestLoadExplicitMissingFileErrors(t *testing.T) {
 }
 
 func TestClaudeDefaults(t *testing.T) {
+	t.Chdir(t.TempDir()) // isolate from any local wazir.yaml so defaults are exercised
 	t.Setenv("WAZIR_GITHUB_PAT", "x")
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
