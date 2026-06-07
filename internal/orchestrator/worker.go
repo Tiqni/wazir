@@ -185,10 +185,18 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 	if err != nil {
 		return fmt.Errorf("create worktree: %w", err)
 	}
+	if wt == "" {
+		// Fail closed: a worktreeless plan/execute would run claude in the daemon's
+		// own cwd, outside any isolation. A real forge never returns ("", nil).
+		return fmt.Errorf("create worktree returned an empty path for %s", card.Repo)
+	}
 	rec.Branch = branch
 	rec.WorktreePath = wt
 	if err := w.store.PutCard(card.ID, rec); err != nil {
-		return fmt.Errorf("persist worktree coords: %w", err)
+		// The worktree exists but its path won't be persisted; remove it best-effort
+		// so it isn't orphaned, and surface the path in case the removal also fails.
+		_ = w.forge.RemoveWorktree(ctx, card.Repo, wt)
+		return fmt.Errorf("persist worktree coords (removed worktree %s): %w", wt, err)
 	}
 
 	res, err := w.brain.Plan(ctx, PlanInput{Transcript: BuildTranscript(card), Spec: card.Body, WorktreePath: wt})

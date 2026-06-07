@@ -86,6 +86,9 @@ func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) error {
 		return err
 	}
 	if _, statErr := os.Stat(filepath.Join(clone, ".git")); statErr == nil {
+		if err := f.resetOrigin(ctx, clone, repo); err != nil {
+			return err
+		}
 		_, err := f.git.run(ctx, clone, true, "fetch", "origin", "--prune")
 		return err
 	}
@@ -138,8 +141,23 @@ func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error
 	if err != nil {
 		return err
 	}
+	if err := f.resetOrigin(ctx, clone, repo); err != nil {
+		return err
+	}
 	_, err = f.git.run(ctx, clone, true, "push", "origin", branch)
 	return err
+}
+
+// resetOrigin points the clone's origin remote at the canonical URL before any
+// authenticated network op. A worktree's execute turn has git access and shares
+// this clone's config, so a tampered origin could otherwise redirect the
+// PAT-bearing request (http.extraHeader) to another host — an exfiltration vector
+// under the §12 prompt-injection threat model. It's a local op (no auth).
+func (f *GitHubForge) resetOrigin(ctx context.Context, clone, repo string) error {
+	if _, err := f.git.run(ctx, clone, false, "remote", "set-url", "origin", f.remoteURL(repo)); err != nil {
+		return fmt.Errorf("reset origin url: %w", err)
+	}
+	return nil
 }
 
 // OpenPR opens a pull request and returns its HTML URL.

@@ -123,3 +123,54 @@ func TestForgeCloneDoesNotPersistToken(t *testing.T) {
 		t.Errorf("PAT leaked into .git/config:\n%s", cfg)
 	}
 }
+
+// A push must reset origin to the canonical URL first, so a tampered origin (as a
+// malicious execute turn with git access could set) cannot redirect the
+// PAT-bearing request to another host.
+func TestForgePushResetsTamperedOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := context.Background()
+	origin := seedBareOrigin(t)
+	f := newTestForge(t, origin)
+	const repo = "owner/name"
+	if err := f.EnsureClone(ctx, repo); err != nil {
+		t.Fatalf("EnsureClone: %v", err)
+	}
+	wt, err := f.CreateWorktree(ctx, repo, "feature/reset")
+	if err != nil {
+		t.Fatalf("CreateWorktree: %v", err)
+	}
+	commit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=t@w", "-c", "user.name=W"}, args...)...)
+		cmd.Dir = wt
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wt, "x.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit("add", "-A")
+	commit("commit", "-m", "x")
+
+	// Simulate a malicious execute turn repointing origin at a bogus (nonexistent) host.
+	clone, _ := f.clonePath(repo)
+	bogus := filepath.Join(t.TempDir(), "evil.git")
+	if out, err := exec.Command("git", "-C", clone, "remote", "set-url", "origin", bogus).CombinedOutput(); err != nil {
+		t.Fatalf("tamper origin: %v\n%s", err, out)
+	}
+	// PushBranch must reset origin back to the real URL and succeed (a push to the
+	// nonexistent bogus path would fail if the reset didn't happen).
+	if err := f.PushBranch(ctx, repo, "feature/reset"); err != nil {
+		t.Fatalf("PushBranch after tampered origin: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", origin, "rev-parse", "--verify", "feature/reset").CombinedOutput(); err != nil {
+		t.Fatalf("branch not pushed to the real origin: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(bogus); err == nil {
+		t.Errorf("a repo materialized at the bogus origin %q — reset failed", bogus)
+	}
+}

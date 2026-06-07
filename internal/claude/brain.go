@@ -103,13 +103,18 @@ func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 	}
 }
 
-// splitTools turns the comma-separated allowlist config into argv form. The
-// default tool specs contain no commas, so a plain split is safe.
+// splitTools turns the comma-separated allowlist config into argv form, trimming
+// surrounding whitespace and dropping empty entries (so "Read, Edit" yields
+// clean tool names the CLI accepts, not " Edit"). The default specs contain no
+// commas, so splitting on comma is safe.
 func splitTools(s string) []string {
-	if s == "" {
-		return nil
+	var out []string
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
 	}
-	return strings.Split(s, ",")
+	return out
 }
 
 // Brainstorm runs one headless brainstorm turn. Expected failures (CLI error,

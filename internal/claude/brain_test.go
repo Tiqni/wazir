@@ -192,3 +192,19 @@ func TestExecuteFailsOnCLIError(t *testing.T) {
 func TestClaudeBrainImplementsBrain(t *testing.T) {
 	var _ orchestrator.Brain = (*ClaudeBrain)(nil)
 }
+
+func TestSplitToolsTrimsAndDropsEmpties(t *testing.T) {
+	got := splitTools("Read, Edit ,, Bash(git:*) ")
+	want := []string{"Read", "Edit", "Bash(git:*)"}
+	if len(got) != len(want) {
+		t.Fatalf("splitTools = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("splitTools[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if splitTools("") != nil || splitTools(" , ") != nil {
+		t.Errorf("empty/whitespace-only input must yield nil, got %#v / %#v", splitTools(""), splitTools(" , "))
+	}
+}

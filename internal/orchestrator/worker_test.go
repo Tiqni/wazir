@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,7 +133,7 @@ func TestWorkerApprovalRunsPlanBuildPR(t *testing.T) {
 		plan:    []PlanResult{{Status: StatusPlanReady, PlanPath: "docs/plan.md"}},
 		execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}},
 	}
-	ff := &fakeForge{prURL: "https://x/pr/1"}
+	ff := &fakeForge{prURL: "https://x/pr/1", wtPath: "/wt/o-r-1"}
 	st := store.NewMemory()
 	w := NewWorker(b, ff, brain, st, nil)
 
@@ -440,5 +441,30 @@ func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
 	// The brain must NOT have been called (fail-fast before any model turn).
 	if len(ff.calls) != 0 {
 		t.Errorf("forge must not be touched on a worktreeless re-entry, got calls %v", ff.calls)
+	}
+}
+
+// A forge that returns an empty worktree path (no error) must fail closed rather
+// than run plan/execute in the daemon's cwd outside any worktree.
+func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", IssueNumber: 1})
+	brain := &scriptedBrain{plan: []PlanResult{{Status: StatusPlanReady, PlanPath: "p"}}}
+	ff := &fakeForge{} // wtPath "" — CreateWorktree returns ("", nil)
+	w := NewWorker(b, ff, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhasePlanning}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed (empty worktree path → fail closed)", card.Phase)
+	}
+	// The plan brain must not have run (guard fires before brain.Plan).
+	if !slices.Contains(ff.calls, "createWorktree") || slices.Contains(ff.calls, "push") {
+		t.Errorf("expected createWorktree then a stop before push, got %v", ff.calls)
 	}
 }
