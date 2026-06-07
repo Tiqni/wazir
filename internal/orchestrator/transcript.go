@@ -14,7 +14,7 @@ func BuildTranscript(c board.Card) string {
 	b.WriteString("# ")
 	b.WriteString(c.Title)
 	b.WriteString("\n\n")
-	b.WriteString(c.Body)
+	b.WriteString(strings.TrimRight(c.Body, "\n"))
 	b.WriteString("\n")
 	for _, cm := range c.Comments {
 		tag := "HUMAN:"
