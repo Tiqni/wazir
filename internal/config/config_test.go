@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,6 +156,7 @@ func TestClaudeEnvOverrides(t *testing.T) {
 }
 
 func TestForgeAndClaudeM4Defaults(t *testing.T) {
+	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
 	t.Setenv("WAZIR_GITHUB_PAT", "x")
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
@@ -168,8 +170,14 @@ func TestForgeAndClaudeM4Defaults(t *testing.T) {
 	if c.Forge.BaseBranch != "main" {
 		t.Errorf("BaseBranch = %q, want main", c.Forge.BaseBranch)
 	}
-	if c.Forge.CloneRoot == "" || c.Forge.WorktreeRoot == "" {
-		t.Errorf("clone/worktree roots must default non-empty: %+v", c.Forge)
+	if !strings.HasSuffix(c.Forge.CloneRoot, ".wazir/clones") {
+		t.Errorf("CloneRoot = %q, want it to expand and end with .wazir/clones", c.Forge.CloneRoot)
+	}
+	if !strings.HasSuffix(c.Forge.WorktreeRoot, ".wazir/worktrees") {
+		t.Errorf("WorktreeRoot = %q, want it to expand and end with .wazir/worktrees", c.Forge.WorktreeRoot)
+	}
+	if strings.HasPrefix(c.Forge.CloneRoot, "~") {
+		t.Errorf("CloneRoot not expanded: %q", c.Forge.CloneRoot)
 	}
 	if c.Claude.PlanTimeout != 10*time.Minute {
 		t.Errorf("PlanTimeout = %s, want 10m", c.Claude.PlanTimeout)
@@ -183,6 +191,7 @@ func TestForgeAndClaudeM4Defaults(t *testing.T) {
 }
 
 func TestForgeEnvOverrides(t *testing.T) {
+	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
 	t.Setenv("WAZIR_GITHUB_PAT", "x")
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
