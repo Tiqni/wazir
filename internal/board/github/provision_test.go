@@ -25,6 +25,9 @@ type fakeAPI struct {
 	setOptionID   string
 
 	itemCounts map[string]int // option id -> item count (for prune occupancy)
+
+	itemStatusOptID string
+	itemStatusFound bool
 }
 
 func (f *fakeAPI) OwnerID(ctx context.Context, ownerType, login string) (string, error) {
@@ -74,6 +77,9 @@ func (f *fakeAPI) ListItems(ctx context.Context, projectID, statusFieldID, optio
 }
 func (f *fakeAPI) StatusOptionItemCounts(ctx context.Context, projectID string) (map[string]int, error) {
 	return f.itemCounts, nil
+}
+func (f *fakeAPI) ItemStatus(ctx context.Context, projectID, issueNodeID string) (string, bool, error) {
+	return f.itemStatusOptID, f.itemStatusFound, nil
 }
 
 func newTestBoard(api projectsAPI, st store.Store) *GitHubBoard {

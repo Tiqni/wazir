@@ -41,4 +41,7 @@ type projectsAPI interface {
 	// StatusOptionItemCounts returns how many items currently sit in each Status
 	// option, keyed by option id. Used by prune to refuse deleting occupied columns.
 	StatusOptionItemCounts(ctx context.Context, projectID string) (map[string]int, error)
+	// ItemStatus returns the current Status single-select option id for a card on
+	// the given project (found=false if the card is not an item, or has no Status).
+	ItemStatus(ctx context.Context, projectID, issueNodeID string) (optionID string, found bool, err error)
 }

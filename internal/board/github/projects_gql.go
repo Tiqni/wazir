@@ -316,4 +316,38 @@ func (g *ghProjects) StatusOptionItemCounts(ctx context.Context, projectID strin
 	return counts, nil
 }
 
+func (g *ghProjects) ItemStatus(ctx context.Context, projectID, issueNodeID string) (string, bool, error) {
+	var q struct {
+		Node struct {
+			Issue struct {
+				ProjectItems struct {
+					Nodes []struct {
+						Project          struct{ ID githubv4.ID } `graphql:"project"`
+						FieldValueByName struct {
+							SingleSelect struct {
+								OptionID githubv4.String `graphql:"optionId"`
+							} `graphql:"... on ProjectV2ItemFieldSingleSelectValue"`
+						} `graphql:"fieldValueByName(name: $statusName)"`
+					}
+				} `graphql:"projectItems(first: 20)"`
+			} `graphql:"... on Issue"`
+		} `graphql:"node(id: $id)"`
+	}
+	vars := map[string]any{"id": githubv4.ID(issueNodeID), "statusName": githubv4.String("Status")}
+	if err := g.gql.Query(ctx, &q, vars); err != nil {
+		return "", false, err
+	}
+	for _, n := range q.Node.Issue.ProjectItems.Nodes {
+		if fmt.Sprintf("%v", n.Project.ID) != projectID {
+			continue
+		}
+		id := string(n.FieldValueByName.SingleSelect.OptionID)
+		if id == "" {
+			return "", false, nil // on the board but no Status set yet
+		}
+		return id, true, nil
+	}
+	return "", false, nil
+}
+
 var _ projectsAPI = (*ghProjects)(nil)

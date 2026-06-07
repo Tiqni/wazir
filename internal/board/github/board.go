@@ -272,9 +272,8 @@ func (b *GitHubBoard) MoveTo(ctx context.Context, cardID string, phase board.Pha
 	return nil
 }
 
-// GetCard returns the card's issue title/body/comments and repo.
-// Phase resolution from the item's Status is deferred to M2 (left empty here):
-// until then the live serve path resolves every card to ActNone.
+// GetCard returns the card's issue title/body/comments, repo, and current Phase
+// (resolved from the project item's Status single-select value).
 func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, error) {
 	ref, err := b.resolveCard(ctx, cardID)
 	if err != nil {
@@ -305,7 +304,32 @@ func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, e
 			Created: c.GetCreatedAt().Time,
 		})
 	}
+
+	// Phase from the item's Status (M2). board() gives the cached project id +
+	// option→phase map; ItemStatus gives the item's current option id.
+	rec, err := b.board(ctx)
+	if err != nil {
+		return board.Card{}, fmt.Errorf("load board: %w", err)
+	}
+	optID, found, err := b.api.ItemStatus(ctx, rec.ProjectNodeID, cardID)
+	if err != nil {
+		return board.Card{}, fmt.Errorf("item status: %w", err)
+	}
+	if found {
+		card.Phase = phaseFromOption(rec.Options, optID)
+	}
 	return card, nil
+}
+
+// phaseFromOption reverse-maps a Status option id to its domain Phase using the
+// cached option map (phase token -> option id). Returns "" when unknown.
+func phaseFromOption(options map[string]string, optionID string) board.Phase {
+	for phaseTok, id := range options {
+		if id == optionID {
+			return board.Phase(phaseTok)
+		}
+	}
+	return ""
 }
 
 // ListCards returns the cards currently in phase (first 100 items, v1).
