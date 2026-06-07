@@ -130,10 +130,25 @@ func (b *GitHubBoard) guardOccupied(ctx context.Context, projectID string, delet
 	return nil
 }
 
+// Hydrate loads the board's cached identity (project node id, status field, and
+// option→phase map) into memory once, at startup. `serve` MUST call this before
+// starting the queue/HTTP server: ParseEvent filters projects_v2_item events by
+// b.projectNodeID, which is otherwise empty until some other call warms it — so
+// without Hydrate every column-move webhook is silently dropped. Returns
+// ErrNotProvisioned if the board hasn't been provisioned/bootstrapped yet.
+// After Hydrate, b.cached and b.projectNodeID are set once and only read, so the
+// concurrent ParseEvent (HTTP) and worker (queue) goroutines need no lock.
+func (b *GitHubBoard) Hydrate(ctx context.Context) error {
+	_, err := b.board(ctx)
+	return err
+}
+
 // board lazily loads the cached board identity (single board, v1).
 func (b *GitHubBoard) board(ctx context.Context) (store.BoardRecord, error) {
 	if b.cached != nil {
-		b.projectNodeID = b.cached.ProjectNodeID
+		// projectNodeID was set when b.cached was first populated (below or in
+		// EnsureProvisioned); don't re-write it here — that would be a data race
+		// with ParseEvent reading it on the HTTP goroutine.
 		return *b.cached, nil
 	}
 	info, found, err := b.api.GetProject(ctx, b.ownerType, b.owner, b.projectNumber)

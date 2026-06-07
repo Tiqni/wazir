@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,35 @@ func TestGetCardEmptyPhaseWhenOptionUnknown(t *testing.T) {
 	}
 	if card.Phase != "" {
 		t.Errorf("phase = %q, want empty (option id not in cached Options)", card.Phase)
+	}
+}
+
+// Hydrate must populate projectNodeID at startup; serve relies on this so
+// ParseEvent's projects_v2_item filter matches the configured board (without it,
+// every column-move webhook is dropped — the M2 regression this guards).
+func TestHydratePopulatesProjectNodeID(t *testing.T) {
+	api := &fakeAPI{project: projectInfo{ProjectID: "P1"}, projectFound: true}
+	st := store.NewMemory()
+	if err := st.PutBoard("P1", store.BoardRecord{ProjectNodeID: "PVT_123", StatusFieldID: "F1"}); err != nil {
+		t.Fatalf("PutBoard: %v", err)
+	}
+	b := newTestBoard(api, st)
+
+	if b.projectNodeID != "" {
+		t.Fatalf("projectNodeID should be empty before Hydrate, got %q", b.projectNodeID)
+	}
+	if err := b.Hydrate(context.Background()); err != nil {
+		t.Fatalf("Hydrate: %v", err)
+	}
+	if b.projectNodeID != "PVT_123" {
+		t.Errorf("projectNodeID = %q after Hydrate, want PVT_123", b.projectNodeID)
+	}
+}
+
+func TestHydrateFailsWhenNotProvisioned(t *testing.T) {
+	b := newTestBoard(&fakeAPI{projectFound: false}, store.NewMemory())
+	if err := b.Hydrate(context.Background()); !errors.Is(err, ErrNotProvisioned) {
+		t.Errorf("Hydrate err = %v, want ErrNotProvisioned", err)
 	}
 }
 

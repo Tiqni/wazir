@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/signal"
 	"syscall"
@@ -57,6 +58,14 @@ func runServe(ctx context.Context, addr string) error {
 	defer st.Close()
 
 	b := boardgh.New(hc, cfg, st)
+	// Load the board's cached identity (project node id + option→phase map) before
+	// serving: ParseEvent drops projects_v2_item events whose project id != the
+	// configured board, and that id is empty until hydrated — so without this every
+	// column-move webhook is dropped and no card advances. Fail loudly if the board
+	// hasn't been provisioned/bootstrapped yet.
+	if err := b.Hydrate(ctx); err != nil {
+		return fmt.Errorf("hydrate board (run `wazir provision` or `wazir bootstrap` first): %w", err)
+	}
 	f := forgegh.New(github.NewClient(hc))
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
