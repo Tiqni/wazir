@@ -2,15 +2,7 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 )
-
-// ErrPhaseRequiresWorktree marks a phase whose live execution needs an isolated
-// git worktree, delivered in M4. The M2 ClaudeBrain returns it from Plan/Execute;
-// the Worker recognizes it and defers gracefully (no Failed). It lives in this
-// (port) package, not internal/claude, so the provider-free Worker can errors.Is
-// it without importing a provider.
-var ErrPhaseRequiresWorktree = errors.New("orchestrator: phase requires a worktree (delivered in M4)")
 
 // BrainstormStatus is the outcome of a brainstorm turn (init-plan §9).
 type BrainstormStatus string

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -42,6 +41,14 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 func (w *Worker) WithMaxBrainstormTurns(n int) *Worker {
 	if n > 0 {
 		w.maxBrainstormTurns = n
+	}
+	return w
+}
+
+// WithBase overrides the PR base branch (from config). Empty is ignored.
+func (w *Worker) WithBase(base string) *Worker {
+	if base != "" {
+		w.base = base
 	}
 	return w
 }
@@ -89,12 +96,12 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		return w.plan(ctx, card)
 	case ActExecute:
 		// Direct Building re-entry (crash recovery / re-delivered Building event):
-		// load the plan path persisted by plan() so a real brain can still execute.
+		// recover the worktree path, branch, and plan path persisted by plan().
 		rec, _, err := w.store.GetCard(card.ID)
 		if err != nil {
 			return fmt.Errorf("read card record %s: %w", card.ID, err)
 		}
-		return w.executePhase(ctx, card, rec.PlanPath)
+		return w.executePhase(ctx, card, rec.WorktreePath, rec.Branch, rec.PlanPath)
 	default:
 		return fmt.Errorf("unknown action %v", d.Action)
 	}
@@ -159,51 +166,68 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 		}
 		card.Phase = board.PhasePlanning
 	}
-	res, err := w.brain.Plan(ctx, PlanInput{Transcript: BuildTranscript(card), Spec: card.Body})
+	rec, _, err := w.store.GetCard(card.ID)
 	if err != nil {
-		if errors.Is(err, ErrPhaseRequiresWorktree) {
-			return w.board.PostComment(ctx, card.ID,
-				"✅ Spec approved — planning & build run in an isolated worktree, which lands in M4. The card will stay in Planning until then.")
-		}
+		return fmt.Errorf("read card record %s: %w", card.ID, err)
+	}
+	branch := branchName(rec.IssueNumber, card.Title)
+	if err := w.forge.EnsureClone(ctx, card.Repo); err != nil {
+		return fmt.Errorf("ensure clone: %w", err)
+	}
+	wt, err := w.forge.CreateWorktree(ctx, card.Repo, branch)
+	if err != nil {
+		return fmt.Errorf("create worktree: %w", err)
+	}
+	rec.Branch = branch
+	rec.WorktreePath = wt
+	if err := w.store.PutCard(card.ID, rec); err != nil {
+		return fmt.Errorf("persist worktree coords: %w", err)
+	}
+
+	res, err := w.brain.Plan(ctx, PlanInput{Transcript: BuildTranscript(card), Spec: card.Body, WorktreePath: wt})
+	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
 	if res.Status != StatusPlanReady {
 		return fmt.Errorf("plan failed: %s", res.Error)
 	}
-	// Persist the plan path so a later Building re-entry (ActExecute) can recover it.
 	w.persistPlanPath(card.ID, res.PlanPath)
 	if err := w.board.MoveTo(ctx, card.ID, board.PhaseBuilding); err != nil {
 		return err
 	}
 	card.Phase = board.PhaseBuilding
-	return w.executePhase(ctx, card, res.PlanPath)
+	return w.executePhase(ctx, card, wt, branch, res.PlanPath)
 }
 
-func (w *Worker) executePhase(ctx context.Context, card board.Card, planPath string) error {
-	res, err := w.brain.Execute(ctx, ExecuteInput{Transcript: BuildTranscript(card), PlanPath: planPath})
+func (w *Worker) executePhase(ctx context.Context, card board.Card, worktreePath, branch, planPath string) error {
+	res, err := w.brain.Execute(ctx, ExecuteInput{Transcript: BuildTranscript(card), PlanPath: planPath, WorktreePath: worktreePath})
 	if err != nil {
-		if errors.Is(err, ErrPhaseRequiresWorktree) {
-			return w.board.PostComment(ctx, card.ID,
-				"⏸️ Build runs in an isolated worktree, which lands in M4. Holding here until then.")
-		}
 		return fmt.Errorf("execute: %w", err)
 	}
 	if res.Status != StatusComplete {
 		return fmt.Errorf("execute failed: %s", res.Error)
 	}
-	// PushBranch is an M4 forge stub today: live it returns ErrNotImplemented and
-	// drops the card to Failed (honest deferral). In tests the fake forge succeeds.
-	if err := w.forge.PushBranch(ctx, card.Repo, res.Branch); err != nil {
+	// Push the orchestrator-owned branch (not res.Branch — the model doesn't pick it).
+	if err := w.forge.PushBranch(ctx, card.Repo, branch); err != nil {
 		return fmt.Errorf("push branch: %w", err)
 	}
-	url, err := w.forge.OpenPR(ctx, card.Repo, res.Branch, w.base, card.Title, prBody(res))
+	url, err := w.forge.OpenPR(ctx, card.Repo, branch, w.base, card.Title, prBody(res))
 	if err != nil {
 		return fmt.Errorf("open pr: %w", err)
 	}
 	if err := w.board.PostComment(ctx, card.ID, "Opened PR: "+url); err != nil {
 		return err
 	}
-	return w.board.MoveTo(ctx, card.ID, board.PhasePRReview)
+	if err := w.board.MoveTo(ctx, card.ID, board.PhasePRReview); err != nil {
+		return err
+	}
+	// Success: drop the worktree (best-effort; keep it on failure for debugging).
+	if worktreePath != "" {
+		if err := w.forge.RemoveWorktree(ctx, card.Repo, worktreePath); err != nil {
+			w.log.Warn("remove worktree", zap.String("card", card.ID), zap.String("path", worktreePath), zap.Error(err))
+		}
+	}
+	return nil
 }
 
 func prBody(res ExecuteResult) string {
@@ -253,4 +277,36 @@ func (w *Worker) persistPlanPath(cardID, planPath string) {
 	if err := w.store.PutCard(cardID, rec); err != nil {
 		w.log.Error("persist plan path", zap.Error(err))
 	}
+}
+
+// branchName is the deterministic, orchestrator-owned feature branch for a card.
+func branchName(issueNumber int, title string) string {
+	return fmt.Sprintf("feature/issue-%d-%s", issueNumber, branchSlug(title))
+}
+
+// branchSlug lowercases title, keeps [a-z0-9], collapses runs to single dashes,
+// trims dashes, and caps length. Empty input yields "card".
+func branchSlug(title string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(title) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 40 {
+		out = strings.Trim(out[:40], "-")
+	}
+	if out == "" {
+		return "card"
+	}
+	return out
 }
