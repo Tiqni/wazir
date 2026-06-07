@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-**M0 is implemented** (ports + GitHub provisioning + the `provision`/`bootstrap`/`card` CLI), open in
-PR #1 on branch `m0-ports-provisioning`. M1–M6 are design-only so far.
+**M0 and M1 are implemented and merged to `main`** (ports + GitHub provisioning + CLI; webhook
+receiver + idempotency + queue + in-memory board + orchestrator with the `Brain` port faked by
+`CannedBrain`). **M2 is in progress** on branch `m2-claude-runner`: the real `claude`-CLI brain
+(`internal/claude`) + the live brainstorm loop (M2+M3 collapsed; plan/execute stay M4). See
+`docs/superpowers/specs/2026-06-07-wazir-m2-design.md` and `docs/superpowers/plans/2026-06-07-wazir-m2.md`.
 
 Two source-of-truth documents, both worth reading before non-trivial work:
 - **`docs/wazir-init-plan.md`** — the original PRD + technical design + phased plan. Section numbers
@@ -145,19 +148,23 @@ capture stderr, set `cmd.Dir` to the worktree for plan/execute, and persist `ses
 ## Layout
 
 ```
-cmd/wazir/             # cobra CLI: root.go, logging.go (zap), provision.go, card.go, main.go
-internal/config/       # fig config: nested wazir.yaml + WAZIR_ env overrides
+cmd/wazir/             # cobra CLI: root.go, logging.go (zap), provision.go, card.go, serve.go, main.go
+internal/config/       # fig config: nested wazir.yaml + WAZIR_ env overrides (incl. claude section)
 internal/board/        # Board port + domain types (Phase, Card, Comment, Event, …)
 internal/board/github/ # GitHub Board impl: mapping, reconcile (pure), projectsAPI seam + githubv4
-                       #   impl, board.go (provisioning + writes + resolution), parse_event.go
+                       #   impl, board.go (provisioning + writes + GetCard phase + Hydrate), parse_event.go
+internal/board/memory/ # in-memory fake Board (M1): runs the full state machine, no network
 internal/forge/        # CodeForge port + ErrNotImplemented
 internal/forge/github/ # GitHub forge: OpenPR (clone/worktree/push are M4 stubs)
 internal/githubauth/   # token-source seam → *http.Client (PAT now, App scaffolded)
 internal/store/        # Store interface + bbolt impl + memory impl (tests)
-internal/orchestrator/ # provider-free core (M1+); currently just the no-provider-import guard test
+internal/orchestrator/ # provider-free core: Resolver + Worker + Brain port (CannedBrain fake) + transcript
+internal/claude/       # Brain impl (M2): Runner (exec + JSON-array envelope) + ClaudeBrain (live brainstorm)
+internal/queue/        # per-card serialized dispatch: keyed mutex + cross-restart TTL lock (M1)
+internal/server/       # net/http webhook receiver: ParseEvent → dedupe → enqueue (M1)
 ```
 
-Planned but absent: `internal/board/memory` (M1 fake), `internal/claude` (M2), `internal/queue` (M1).
+Planned but absent: worktree/plan/execute live path (M4); `runs`/cost persistence + budget breaker (M5).
 
 ## Key libraries
 
@@ -172,10 +179,10 @@ Planned but absent: `internal/board/memory` (M1 fake), `internal/claude` (M2), `
 
 ## Build order (§10)
 
-**M0 ✅** ports + GitHub plumbing + provisioning → **M1** webhook receiver + idempotency + queue +
-in-memory Board → **M2** Claude Runner (mocked brain) → **M3** real brainstorm loop → **M4** worktree +
-plan + execute + PR → **M5** hardening → **M6** (optional) polish + second provider. Each milestone is
-independently shippable and testable.
+**M0 ✅** ports + GitHub plumbing + provisioning → **M1 ✅** webhook receiver + idempotency + queue +
+in-memory Board → **M2 🚧** Claude Runner (real `claude`-CLI brain + live brainstorm loop; M2+M3
+collapsed; plan/execute deferred to M4) → **M4** worktree + plan + execute + PR → **M5** hardening →
+**M6** (optional) polish + second provider. Each milestone is independently shippable and testable.
 
 ## Gotchas (§12)
 

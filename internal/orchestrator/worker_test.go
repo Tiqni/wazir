@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
@@ -18,10 +19,12 @@ type scriptedBrain struct {
 	execute    []ExecuteResult
 	err        error
 
+	brainstormCalls  int    // how many times Brainstorm was invoked
 	lastExecPlanPath string // records the PlanPath the last Execute call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
+	s.brainstormCalls++
 	if s.err != nil {
 		return BrainstormResult{}, s.err
 	}
@@ -229,5 +232,123 @@ func TestWorkerIdempotentOnReprocessedComment(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseSpecReview {
 		t.Errorf("phase = %q, want SpecReview (unchanged by the replay)", card.Phase)
+	}
+}
+
+func TestWorkerBrainstormFailedGoesToFailed(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: BrainstormFailed, Error: "bad contract"}}}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed", card.Phase)
+	}
+}
+
+func TestWorkerBrainstormCountsTurns(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	st := store.NewMemory()
+	w := NewWorker(b, &fakeForge{}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 1 {
+		t.Errorf("BrainstormTurns = %d, want 1", rec.BrainstormTurns)
+	}
+}
+
+func TestWorkerBrainstormCapEscalates(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(b, &fakeForge{}, brain, st, nil).WithMaxBrainstormTurns(2)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseAwaitingAnswers {
+		t.Errorf("phase = %q, want AwaitingAnswers (escalation stays put)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "limit") {
+		t.Errorf("want a single 'limit' escalation comment, got %+v", card.Comments)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 2 {
+		t.Errorf("BrainstormTurns = %d, want unchanged 2 (no increment past the cap)", rec.BrainstormTurns)
+	}
+	// The cap must short-circuit BEFORE the (paid) model call — no further spend.
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain called %d times past the cap, want 0 (no further spend)", brain.brainstormCalls)
+	}
+}
+
+func TestWorkerSpecReadyResetsTurns(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 3})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(b, &fakeForge{}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 0 {
+		t.Errorf("BrainstormTurns = %d, want reset to 0", rec.BrainstormTurns)
+	}
+}
+
+func TestWorkerPlanDeferralStaysInPlanning(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
+	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhasePlanning {
+		t.Errorf("phase = %q, want Planning (friendly deferral, not Failed)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
+		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
+	}
+}
+
+// The execute branch (ActExecute on a Building card) must defer the same way as
+// plan: post a comment and hold, never move to Failed.
+func TestWorkerExecuteDeferralStaysInBuilding(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhaseBuilding})
+	// scriptedBrain.err fires for every method, so brain.Execute returns the sentinel.
+	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseBuilding {
+		t.Errorf("phase = %q, want Building (deferral must not move to Failed)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
+		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
 	}
 }

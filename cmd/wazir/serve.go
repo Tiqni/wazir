@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/signal"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	boardgh "github.com/EmadMokhtar/wazir/internal/board/github"
+	"github.com/EmadMokhtar/wazir/internal/claude"
 	"github.com/EmadMokhtar/wazir/internal/config"
 	forgegh "github.com/EmadMokhtar/wazir/internal/forge/github"
 	"github.com/EmadMokhtar/wazir/internal/githubauth"
@@ -26,7 +28,7 @@ func newServeCmd() *cobra.Command {
 	var addr string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the webhook receiver + orchestrator daemon (M1: CannedBrain)",
+		Short: "Run the webhook receiver + orchestrator daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
@@ -38,9 +40,8 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
-// runServe wires the GitHub board + forge, a CannedBrain, the queue, and the
-// receiver, then serves until SIGINT/SIGTERM and drains. M2 swaps CannedBrain
-// for the real internal/claude brain.
+// runServe wires the GitHub board + forge, the real claude brain, the queue,
+// and the receiver, then serves until SIGINT/SIGTERM and drains.
 func runServe(ctx context.Context, addr string) error {
 	cfg, err := config.Load(flagConfig)
 	if err != nil {
@@ -57,8 +58,25 @@ func runServe(ctx context.Context, addr string) error {
 	defer st.Close()
 
 	b := boardgh.New(hc, cfg, st)
+	// Load the board's cached identity (project node id + option→phase map) before
+	// serving: ParseEvent drops projects_v2_item events whose project id != the
+	// configured board, and that id is empty until hydrated — so without this every
+	// column-move webhook is dropped and no card advances. Fail loudly if the board
+	// hasn't been provisioned/bootstrapped yet.
+	if err := b.Hydrate(ctx); err != nil {
+		return fmt.Errorf("hydrate board (run `wazir provision` or `wazir bootstrap` first): %w", err)
+	}
 	f := forgegh.New(github.NewClient(hc))
-	worker := orchestrator.NewWorker(b, f, orchestrator.CannedBrain{}, st, logger)
+	brain := claude.New(cfg.Claude, logger)
+	worker := orchestrator.NewWorker(b, f, brain, st, logger).
+		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns)
+
+	// The queue runs on a context decoupled from the SIGINT signal so a graceful
+	// drain lets in-flight claude turns finish (bounded by the per-turn timeout)
+	// instead of cancelling them mid-flight. A single defer pins the order
+	// (drain while queueCtx is live, then release it) so it can't be broken by a
+	// future reorder, and still runs on every return path.
+	queueCtx, cancelQueue := context.WithCancel(context.Background())
 
 	q := queue.New(st, worker.Process, queue.Options{
 		Workers: 4,
@@ -66,8 +84,11 @@ func runServe(ctx context.Context, addr string) error {
 		LockTTL: 5 * time.Minute,
 		Logger:  logger,
 	})
-	q.Start(ctx)
-	defer q.Shutdown()
+	q.Start(queueCtx)
+	defer func() {
+		q.Shutdown()  // drain in-flight turns while queueCtx is still live
+		cancelQueue() // then release the queue context
+	}()
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", server.New(b, st, q, logger))

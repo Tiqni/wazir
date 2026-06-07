@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/kkyr/fig"
 )
@@ -14,7 +15,7 @@ import (
 // github.pat field is overridden by WAZIR_GITHUB_PAT.
 const envPrefix = "WAZIR"
 
-// Config is the full M0 configuration surface (init-plan §11, spec §8).
+// Config is the full configuration surface (init-plan §11).
 // Sections map to wazir.yaml; env overrides follow WAZIR_<SECTION>_<FIELD>.
 type Config struct {
 	GitHub   GitHubConfig  `fig:"github"`
@@ -22,6 +23,15 @@ type Config struct {
 	Repos    []string      `fig:"repos"`
 	BotLogin string        `fig:"bot_login"`
 	Store    StoreConfig   `fig:"store"`
+	Claude   ClaudeConfig  `fig:"claude"`
+}
+
+// ClaudeConfig configures the headless claude-CLI brain (M2; init-plan §8.4/§11).
+type ClaudeConfig struct {
+	Bin                string        `fig:"bin" default:"claude"`             // WAZIR_CLAUDE_BIN
+	Model              string        `fig:"model"`                            // WAZIR_CLAUDE_MODEL ("" = CLI default)
+	Timeout            time.Duration `fig:"timeout" default:"5m"`             // WAZIR_CLAUDE_TIMEOUT
+	MaxBrainstormTurns int           `fig:"max_brainstorm_turns" default:"8"` // WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS
 }
 
 // GitHubConfig holds auth + GitHub-side identity. Secrets (pat, webhook_secret,

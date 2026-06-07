@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const sampleYAML = `
@@ -107,5 +108,48 @@ func TestLoadRejectsPATAuthWithoutToken(t *testing.T) {
 func TestLoadExplicitMissingFileErrors(t *testing.T) {
 	if _, err := Load("/no/such/wazir.yaml"); err == nil {
 		t.Fatal("expected error for an explicit but missing config file")
+	}
+}
+
+func TestClaudeDefaults(t *testing.T) {
+	t.Chdir(t.TempDir()) // isolate from any local wazir.yaml so defaults are exercised
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Claude.Bin != "claude" {
+		t.Errorf("Bin = %q, want claude", c.Claude.Bin)
+	}
+	if c.Claude.Timeout != 5*time.Minute {
+		t.Errorf("Timeout = %s, want 5m", c.Claude.Timeout)
+	}
+	if c.Claude.MaxBrainstormTurns != 8 {
+		t.Errorf("MaxBrainstormTurns = %d, want 8", c.Claude.MaxBrainstormTurns)
+	}
+}
+
+func TestClaudeEnvOverrides(t *testing.T) {
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	t.Setenv("WAZIR_CLAUDE_BIN", "/usr/local/bin/claude")
+	t.Setenv("WAZIR_CLAUDE_MODEL", "opus")
+	t.Setenv("WAZIR_CLAUDE_TIMEOUT", "90s")
+	t.Setenv("WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS", "3")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Claude.Bin != "/usr/local/bin/claude" || c.Claude.Model != "opus" {
+		t.Errorf("claude = %+v", c.Claude)
+	}
+	if c.Claude.Timeout != 90*time.Second {
+		t.Errorf("Timeout = %s, want 90s", c.Claude.Timeout)
+	}
+	if c.Claude.MaxBrainstormTurns != 3 {
+		t.Errorf("MaxBrainstormTurns = %d, want 3", c.Claude.MaxBrainstormTurns)
 	}
 }

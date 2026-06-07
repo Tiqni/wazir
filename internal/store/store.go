@@ -21,6 +21,7 @@ type CardRecord struct {
 	ProjectItemID          string
 	LastProcessedCommentID string // M1: skip re-delivered comment events (§8.7)
 	PlanPath               string // M1: persisted so a Building re-entry/replay still has the plan
+	BrainstormTurns        int    // M2: count of clarifying-question rounds, for the MAX cap
 }
 
 // Store is the persistence port.

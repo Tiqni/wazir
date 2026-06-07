@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,6 +105,115 @@ func TestResolveCardUsesNodeFallbackThenCaches(t *testing.T) {
 	}
 	if api.resolveCalled {
 		t.Error("expected cache hit on second resolve")
+	}
+}
+
+func TestGetCardPopulatesPhaseFromStatus(t *testing.T) {
+	rest := restClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/comments") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`{"number":42,"title":"T","body":"B"}`))
+	})
+	api := &fakeAPI{itemStatusOptID: "opt-brain", itemStatusFound: true}
+	st := store.NewMemory()
+	st.PutCard("ISSUE1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 42})
+	b := &GitHubBoard{rest: rest, api: api, store: st}
+	b.cached = &store.BoardRecord{
+		ProjectNodeID: "P1",
+		Options:       map[string]string{string(board.PhaseBrainstorming): "opt-brain"},
+	}
+
+	card, err := b.GetCard(context.Background(), "ISSUE1")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if card.Phase != board.PhaseBrainstorming {
+		t.Errorf("phase = %q, want Brainstorming", card.Phase)
+	}
+	if card.Title != "T" || card.Body != "B" {
+		t.Errorf("card = %+v", card)
+	}
+}
+
+func TestGetCardEmptyPhaseWhenItemNotOnBoard(t *testing.T) {
+	rest := restClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/comments") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`{"number":42,"title":"T","body":"B"}`))
+	})
+	api := &fakeAPI{itemStatusFound: false}
+	st := store.NewMemory()
+	st.PutCard("ISSUE1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 42})
+	b := &GitHubBoard{rest: rest, api: api, store: st}
+	b.cached = &store.BoardRecord{ProjectNodeID: "P1", Options: map[string]string{}}
+
+	card, err := b.GetCard(context.Background(), "ISSUE1")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if card.Phase != "" {
+		t.Errorf("phase = %q, want empty (item not on board)", card.Phase)
+	}
+}
+
+// A Status option id that isn't in the cached Options map (e.g. a non-Wazir
+// column, or a stale cache) must resolve to an empty Phase, not a wrong one.
+func TestGetCardEmptyPhaseWhenOptionUnknown(t *testing.T) {
+	rest := restClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/comments") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`{"number":42,"title":"T","body":"B"}`))
+	})
+	api := &fakeAPI{itemStatusOptID: "opt-unknown", itemStatusFound: true}
+	st := store.NewMemory()
+	st.PutCard("ISSUE1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 42})
+	b := &GitHubBoard{rest: rest, api: api, store: st}
+	b.cached = &store.BoardRecord{
+		ProjectNodeID: "P1",
+		Options:       map[string]string{string(board.PhaseBrainstorming): "opt-brain"},
+	}
+
+	card, err := b.GetCard(context.Background(), "ISSUE1")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if card.Phase != "" {
+		t.Errorf("phase = %q, want empty (option id not in cached Options)", card.Phase)
+	}
+}
+
+// Hydrate must populate projectNodeID at startup; serve relies on this so
+// ParseEvent's projects_v2_item filter matches the configured board (without it,
+// every column-move webhook is dropped — the M2 regression this guards).
+func TestHydratePopulatesProjectNodeID(t *testing.T) {
+	api := &fakeAPI{project: projectInfo{ProjectID: "P1"}, projectFound: true}
+	st := store.NewMemory()
+	if err := st.PutBoard("P1", store.BoardRecord{ProjectNodeID: "PVT_123", StatusFieldID: "F1"}); err != nil {
+		t.Fatalf("PutBoard: %v", err)
+	}
+	b := newTestBoard(api, st)
+
+	if b.projectNodeID != "" {
+		t.Fatalf("projectNodeID should be empty before Hydrate, got %q", b.projectNodeID)
+	}
+	if err := b.Hydrate(context.Background()); err != nil {
+		t.Fatalf("Hydrate: %v", err)
+	}
+	if b.projectNodeID != "PVT_123" {
+		t.Errorf("projectNodeID = %q after Hydrate, want PVT_123", b.projectNodeID)
+	}
+}
+
+func TestHydrateFailsWhenNotProvisioned(t *testing.T) {
+	b := newTestBoard(&fakeAPI{projectFound: false}, store.NewMemory())
+	if err := b.Hydrate(context.Background()); !errors.Is(err, ErrNotProvisioned) {
+		t.Errorf("Hydrate err = %v, want ErrNotProvisioned", err)
 	}
 }
 

@@ -87,6 +87,12 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		}, nil
 
 	case *github.ProjectV2ItemEvent:
+		// Loop prevention: the bot's own MoveTo mutations emit projects_v2_item
+		// events. Drop them so a move never re-triggers the worker. Requires
+		// bot_login to be configured (guarded so an empty login never matches).
+		if b.botLogin != "" && e.GetSender().GetLogin() == b.botLogin {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
 		item := e.GetProjectV2Item()
 		if item == nil || item.GetProjectNodeID() != b.projectNodeID {
 			return board.Event{Kind: board.EventIgnore}, nil

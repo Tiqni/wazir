@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -26,6 +28,32 @@ func TestBuildTranscriptTagsAuthors(t *testing.T) {
 	}
 	if !strings.Contains(got, "SYSTEM: Which provider?") {
 		t.Errorf("bot comment not tagged:\n%s", got)
+	}
+}
+
+func TestBrainstormResultHasFailureChannel(t *testing.T) {
+	r := BrainstormResult{Status: BrainstormFailed, Error: "claude exited 1"}
+	if r.Status != BrainstormFailed || r.Error == "" {
+		t.Errorf("BrainstormResult failure channel missing: %+v", r)
+	}
+}
+
+func TestErrPhaseRequiresWorktreeIsSentinel(t *testing.T) {
+	// The Worker wraps the sentinel with %w; errors.Is must survive that chain.
+	wrapped := fmt.Errorf("plan: %w", ErrPhaseRequiresWorktree)
+	if !errors.Is(wrapped, ErrPhaseRequiresWorktree) {
+		t.Fatal("ErrPhaseRequiresWorktree must survive errors.Is through a wrapping chain")
+	}
+}
+
+func TestBuildTranscriptTrimsTrailingBodyNewlines(t *testing.T) {
+	c := board.Card{Title: "T", Body: "body\n\n\n", Comments: []board.Comment{{Body: "hi", IsBot: false}}}
+	got := BuildTranscript(c)
+	if strings.Contains(got, "body\n\n\nHUMAN") || strings.Contains(got, "body\n\n\n\n") {
+		t.Errorf("trailing body newlines not trimmed:\n%q", got)
+	}
+	if !strings.Contains(got, "body\n") || !strings.Contains(got, "HUMAN: hi") {
+		t.Errorf("transcript malformed:\n%q", got)
 	}
 }
 
