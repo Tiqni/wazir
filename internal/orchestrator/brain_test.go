@@ -57,6 +57,14 @@ func TestBuildTranscriptTrimsTrailingBodyNewlines(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteInputsCarryWorktreePath(t *testing.T) {
+	p := PlanInput{Transcript: "t", Spec: "s", WorktreePath: "/wt"}
+	e := ExecuteInput{Transcript: "t", PlanPath: "P", WorktreePath: "/wt"}
+	if p.WorktreePath != "/wt" || e.WorktreePath != "/wt" {
+		t.Errorf("WorktreePath not carried: %+v %+v", p, e)
+	}
+}
+
 func TestCannedBrainAdvances(t *testing.T) {
 	ctx := context.Background()
 	var b Brain = CannedBrain{}

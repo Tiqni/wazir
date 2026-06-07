@@ -43,8 +43,9 @@ type BrainstormResult struct {
 
 // PlanInput / PlanResult — the §9 plan contract.
 type PlanInput struct {
-	Transcript string
-	Spec       string
+	Transcript   string
+	Spec         string
+	WorktreePath string // M4: cmd.Dir for the headless claude run
 }
 type PlanResult struct {
 	Status   PhaseStatus
@@ -55,8 +56,9 @@ type PlanResult struct {
 
 // ExecuteInput / ExecuteResult — the §9 execute contract.
 type ExecuteInput struct {
-	Transcript string
-	PlanPath   string
+	Transcript   string
+	PlanPath     string
+	WorktreePath string // M4: cmd.Dir for the headless claude run
 }
 type ExecuteResult struct {
 	Status      PhaseStatus
