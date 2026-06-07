@@ -26,7 +26,7 @@ type Runner struct {
 type RunSpec struct {
 	Prompt          string
 	SystemPrompt    string
-	Dir             string        // cmd.Dir; empty for brainstorm, a worktree in M4
+	Dir             string // cmd.Dir; empty for brainstorm, a worktree in M4
 	Model           string
 	Timeout         time.Duration
 	AllowedTools    []string
