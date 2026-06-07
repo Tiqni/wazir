@@ -26,6 +26,8 @@ func writeFakeClaude(t *testing.T, stdout string, exitCode, sleepSecs int) strin
 	}
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > \"$0.args\"\n" +
+		"pwd > \"$0.pwd\"\n" +
+		"env > \"$0.env\"\n" +
 		sleepLine +
 		"cat <<'WAZIR_EOF'\n" + stdout + "\nWAZIR_EOF\n" +
 		fmt.Sprintf("exit %d\n", exitCode)
@@ -134,6 +136,25 @@ func TestParseEnvelopeSingleObjectFallback(t *testing.T) {
 	ev, err := parseEnvelope([]byte(`{"type":"result","subtype":"success","result":"hi","session_id":"s"}`))
 	if err != nil || ev.Result != "hi" || ev.SessionID != "s" {
 		t.Fatalf("fallback failed: %+v err %v", ev, err)
+	}
+}
+
+func TestRunnerCuratesEnvDropsSecrets(t *testing.T) {
+	t.Setenv("WAZIR_SECRET", "topsecret")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if strings.Contains(string(env), "WAZIR_SECRET") || strings.Contains(string(env), "topsecret") {
+		t.Errorf("curated env leaked a WAZIR_* secret:\n%s", env)
+	}
+	if !strings.Contains(string(env), "HOME=") {
+		t.Errorf("curated env dropped HOME:\n%s", env)
 	}
 }
 
