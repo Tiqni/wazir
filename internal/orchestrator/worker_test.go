@@ -199,7 +199,7 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
 	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
-	ff := &fakeForge{pushErr: forge.ErrNotImplemented}
+	ff := &fakeForge{pushErr: forge.ErrNotImplemented, wtPath: "/wt/keep"}
 	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
 
 	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
@@ -208,6 +208,41 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseFailed {
 		t.Errorf("phase = %q, want Failed (M4 forge stub)", card.Phase)
+	}
+	if ff.removed {
+		t.Error("worktree must be KEPT when push fails, but RemoveWorktree was called")
+	}
+}
+
+func TestBranchSlug(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"Add subtract", "add-subtract"},
+		{"", "card"},
+		{"!!!", "card"},
+		{"  Fix   the BUG!!  ", "fix-the-bug"},
+	}
+	for _, tc := range cases {
+		got := branchSlug(tc.in)
+		if got != tc.want {
+			t.Errorf("branchSlug(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// 50-char all-letter title: result must be <= 40 chars and have no leading/trailing dash.
+	title50 := strings.Repeat("a", 50)
+	slug50 := branchSlug(title50)
+	if len(slug50) > 40 {
+		t.Errorf("branchSlug(50-letter title) length = %d, want <= 40", len(slug50))
+	}
+	if strings.HasPrefix(slug50, "-") || strings.HasSuffix(slug50, "-") {
+		t.Errorf("branchSlug(50-letter title) = %q has leading/trailing dash", slug50)
+	}
+
+	// branchName combines issue number and slug.
+	if got := branchName(7, "Add subtract"); got != "feature/issue-7-add-subtract" {
+		t.Errorf("branchName(7, \"Add subtract\") = %q, want \"feature/issue-7-add-subtract\"", got)
 	}
 }
 
