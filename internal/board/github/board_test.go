@@ -159,6 +159,34 @@ func TestGetCardEmptyPhaseWhenItemNotOnBoard(t *testing.T) {
 	}
 }
 
+// A Status option id that isn't in the cached Options map (e.g. a non-Wazir
+// column, or a stale cache) must resolve to an empty Phase, not a wrong one.
+func TestGetCardEmptyPhaseWhenOptionUnknown(t *testing.T) {
+	rest := restClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/comments") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write([]byte(`{"number":42,"title":"T","body":"B"}`))
+	})
+	api := &fakeAPI{itemStatusOptID: "opt-unknown", itemStatusFound: true}
+	st := store.NewMemory()
+	st.PutCard("ISSUE1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 42})
+	b := &GitHubBoard{rest: rest, api: api, store: st}
+	b.cached = &store.BoardRecord{
+		ProjectNodeID: "P1",
+		Options:       map[string]string{string(board.PhaseBrainstorming): "opt-brain"},
+	}
+
+	card, err := b.GetCard(context.Background(), "ISSUE1")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if card.Phase != "" {
+		t.Errorf("phase = %q, want empty (option id not in cached Options)", card.Phase)
+	}
+}
+
 func TestMoveToTranslatesPhaseToOptionID(t *testing.T) {
 	api := &fakeAPI{findItemID: "ITEM1", findItemFound: true}
 	st := store.NewMemory()

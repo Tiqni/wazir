@@ -279,6 +279,13 @@ func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, e
 	if err != nil {
 		return board.Card{}, err
 	}
+	// Load the cached board first (project id + option→phase map) so an
+	// unprovisioned board fails before the REST round-trips, matching the
+	// board()-first pattern in MoveTo/ListCards.
+	rec, err := b.board(ctx)
+	if err != nil {
+		return board.Card{}, fmt.Errorf("load board: %w", err)
+	}
 	owner, name, err := splitRepo(ref.Repo)
 	if err != nil {
 		return board.Card{}, err
@@ -305,12 +312,7 @@ func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, e
 		})
 	}
 
-	// Phase from the item's Status (M2). board() gives the cached project id +
-	// option→phase map; ItemStatus gives the item's current option id.
-	rec, err := b.board(ctx)
-	if err != nil {
-		return board.Card{}, fmt.Errorf("load board: %w", err)
-	}
+	// Phase from the item's current Status option id (M2).
 	optID, found, err := b.api.ItemStatus(ctx, rec.ProjectNodeID, cardID)
 	if err != nil {
 		return board.Card{}, fmt.Errorf("item status: %w", err)

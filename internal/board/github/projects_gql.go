@@ -316,6 +316,8 @@ func (g *ghProjects) StatusOptionItemCounts(ctx context.Context, projectID strin
 	return counts, nil
 }
 
+// ItemStatus reads a card's current Status single-select option id on the given
+// project (mirrors FindItem's projectItems query). See the projectsAPI contract.
 func (g *ghProjects) ItemStatus(ctx context.Context, projectID, issueNodeID string) (string, bool, error) {
 	var q struct {
 		Node struct {
