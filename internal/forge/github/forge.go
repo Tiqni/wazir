@@ -1,10 +1,11 @@
-// Package github implements the forge.CodeForge port. M0 ships OpenPR;
-// clone/worktree/push land in M4.
+// Package github implements the forge.CodeForge port.
 package github
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/go-github/v66/github"
@@ -12,13 +13,46 @@ import (
 	"github.com/EmadMokhtar/wazir/internal/forge"
 )
 
-// GitHubForge implements forge.CodeForge.
-type GitHubForge struct {
-	rest *github.Client
+// Options configures the local git layout + auth for the GitHub forge.
+type Options struct {
+	GitBin       string
+	CloneRoot    string
+	WorktreeRoot string
+	Base         string
+	Token        string                   // PAT; injected as http.extraHeader (never persisted)
+	RemoteURL    func(repo string) string // optional; defaults to https://github.com/<repo>.git
 }
 
-// New returns a GitHubForge over an authenticated REST client.
-func New(rest *github.Client) *GitHubForge { return &GitHubForge{rest: rest} }
+// GitHubForge implements forge.CodeForge.
+type GitHubForge struct {
+	rest         *github.Client
+	git          gitRunner
+	cloneRoot    string
+	worktreeRoot string
+	base         string
+	remoteURL    func(repo string) string
+}
+
+// New returns a GitHubForge. rest may be nil in git-only tests.
+func New(rest *github.Client, opts Options) *GitHubForge {
+	if opts.GitBin == "" {
+		opts.GitBin = "git"
+	}
+	if opts.Base == "" {
+		opts.Base = "main"
+	}
+	if opts.RemoteURL == nil {
+		opts.RemoteURL = func(repo string) string { return "https://github.com/" + repo + ".git" }
+	}
+	return &GitHubForge{
+		rest:         rest,
+		git:          gitRunner{bin: opts.GitBin, token: opts.Token},
+		cloneRoot:    opts.CloneRoot,
+		worktreeRoot: opts.WorktreeRoot,
+		base:         opts.Base,
+		remoteURL:    opts.RemoteURL,
+	}
+}
 
 func splitRepo(full string) (owner, name string, err error) {
 	parts := strings.Split(full, "/")
@@ -26,6 +60,86 @@ func splitRepo(full string) (owner, name string, err error) {
 		return "", "", fmt.Errorf("invalid repo %q (want owner/name)", full)
 	}
 	return parts[0], parts[1], nil
+}
+
+func (f *GitHubForge) clonePath(repo string) (string, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(f.cloneRoot, owner, name), nil
+}
+
+func (f *GitHubForge) worktreePath(repo, branch string) (string, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	slug := strings.ReplaceAll(branch, "/", "-")
+	return filepath.Join(f.worktreeRoot, owner+"-"+name+"-"+slug), nil
+}
+
+// EnsureClone makes the clone present + current (clone if absent, else fetch).
+func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) error {
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(filepath.Join(clone, ".git")); statErr == nil {
+		_, err := f.git.run(ctx, clone, true, "fetch", "origin", "--prune")
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(clone), 0o755); err != nil {
+		return fmt.Errorf("mkdir clone parent: %w", err)
+	}
+	_, err = f.git.run(ctx, "", true, "clone", f.remoteURL(repo), clone)
+	return err
+}
+
+// CreateWorktree adds a worktree on `branch`, reset to origin/<base>, and returns its path.
+func (f *GitHubForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		return "", err
+	}
+	wt, err := f.worktreePath(repo, branch)
+	if err != nil {
+		return "", err
+	}
+	// Idempotent re-entry: drop a stale worktree at the same path, then prune.
+	_, _ = f.git.run(ctx, clone, false, "worktree", "remove", "--force", wt)
+	_, _ = f.git.run(ctx, clone, false, "worktree", "prune")
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir worktree parent: %w", err)
+	}
+	// -B creates or resets the branch to the base; the worker re-plans from scratch on re-entry.
+	if _, err := f.git.run(ctx, clone, false, "worktree", "add", "-B", branch, wt, "origin/"+f.base); err != nil {
+		return "", err
+	}
+	return wt, nil
+}
+
+// RemoveWorktree removes the worktree at path (run from the clone) and prunes.
+func (f *GitHubForge) RemoveWorktree(ctx context.Context, repo, path string) error {
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		return err
+	}
+	if _, err := f.git.run(ctx, clone, false, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+	_, _ = f.git.run(ctx, clone, false, "worktree", "prune")
+	return nil
+}
+
+// PushBranch pushes branch (created in a linked worktree, ref lives in the shared clone) to origin.
+func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error {
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		return err
+	}
+	_, err = f.git.run(ctx, clone, true, "push", "origin", branch)
+	return err
 }
 
 // OpenPR opens a pull request and returns its HTML URL.
@@ -45,12 +159,5 @@ func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, bod
 	}
 	return pr.GetHTMLURL(), nil
 }
-
-func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) error { return forge.ErrNotImplemented }
-func (f *GitHubForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
-	return "", forge.ErrNotImplemented
-}
-func (f *GitHubForge) RemoveWorktree(ctx context.Context, repo, path string) error { return forge.ErrNotImplemented }
-func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error   { return forge.ErrNotImplemented }
 
 var _ forge.CodeForge = (*GitHubForge)(nil)

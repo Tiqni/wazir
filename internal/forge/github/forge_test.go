@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v66/github"
-
-	"github.com/EmadMokhtar/wazir/internal/forge"
 )
 
 func TestOpenPRPostsCorrectRequest(t *testing.T) {
@@ -43,12 +41,5 @@ func TestOpenPRPostsCorrectRequest(t *testing.T) {
 	}
 	if payload["head"] != "feature/x" || payload["base"] != "main" || payload["title"] != "Add X" {
 		t.Errorf("payload = %+v", payload)
-	}
-}
-
-func TestUnimplementedMethodsReturnSentinel(t *testing.T) {
-	f := &GitHubForge{}
-	if err := f.EnsureClone(context.Background(), "o/r"); err != forge.ErrNotImplemented {
-		t.Errorf("EnsureClone err = %v, want ErrNotImplemented", err)
 	}
 }

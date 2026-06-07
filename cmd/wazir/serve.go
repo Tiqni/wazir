@@ -66,7 +66,13 @@ func runServe(ctx context.Context, addr string) error {
 	if err := b.Hydrate(ctx); err != nil {
 		return fmt.Errorf("hydrate board (run `wazir provision` or `wazir bootstrap` first): %w", err)
 	}
-	f := forgegh.New(github.NewClient(hc))
+	f := forgegh.New(github.NewClient(hc), forgegh.Options{
+		GitBin:       cfg.Forge.GitBin,
+		CloneRoot:    cfg.Forge.CloneRoot,
+		WorktreeRoot: cfg.Forge.WorktreeRoot,
+		Base:         cfg.Forge.BaseBranch,
+		Token:        cfg.GitHub.PAT,
+	})
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
 		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns)
