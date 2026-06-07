@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -73,6 +74,20 @@ func runServe(ctx context.Context, addr string) error {
 		Base:         cfg.Forge.BaseBranch,
 		Token:        cfg.GitHub.PAT,
 	})
+	// Resolve the Superpowers plugin dir plan/execute load via --plugin-dir under
+	// the per-run isolated config dir. Fail loudly at startup, not mid-turn.
+	if cfg.Claude.PluginDir == "" {
+		home, _ := os.UserHomeDir()
+		pluginDir, derr := claude.DiscoverSuperpowersPluginDir(home)
+		if derr != nil {
+			return fmt.Errorf("locate superpowers plugin (set WAZIR_CLAUDE_PLUGIN_DIR): %w", derr)
+		}
+		cfg.Claude.PluginDir = pluginDir
+	}
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+		logger.Warn("no claude auth env set (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY); " +
+			"headless runs will fail to authenticate under the isolated config dir")
+	}
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
 		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns).
