@@ -49,8 +49,14 @@ forge:
   worktree_root: ~/.wazir/worktrees
   base_branch: main
 
-# (M4 additions to the claude section — merge into the existing claude block.)
+# (M4/M5 additions to the claude section — merge into the existing claude block.)
 # claude:
 #   plan_timeout: 10m
 #   execute_timeout: 30m   # execute needs longer than brainstorm
 #   execute_allowed_tools: "Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
+#   plugin_dir: ""         # M5: abs path to the Superpowers plugin; "" = auto-discover newest under ~/.claude
+#   setting_sources: ""    # M5: value for --setting-sources (spike-pinned); "" = omit the flag
+#
+# M5 isolation: each claude turn runs under a fresh, empty CLAUDE_CONFIG_DIR (no
+# global ~/.claude/CLAUDE.md, no other plugins). Authenticate the daemon with a
+# long-lived token instead of Keychain:  export CLAUDE_CODE_OAUTH_TOKEN=...
