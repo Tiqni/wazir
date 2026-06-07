@@ -22,6 +22,8 @@ type CardRecord struct {
 	LastProcessedCommentID string // M1: skip re-delivered comment events (§8.7)
 	PlanPath               string // M1: persisted so a Building re-entry/replay still has the plan
 	BrainstormTurns        int    // M2: count of clarifying-question rounds, for the MAX cap
+	WorktreePath           string // M4: absolute worktree path — Building re-entry cmd.Dir + cleanup
+	Branch                 string // M4: feature/issue-<n>-<slug>, the deterministic push/PR branch
 }
 
 // Store is the persistence port.
