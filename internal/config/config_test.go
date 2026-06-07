@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -151,5 +152,63 @@ func TestClaudeEnvOverrides(t *testing.T) {
 	}
 	if c.Claude.MaxBrainstormTurns != 3 {
 		t.Errorf("MaxBrainstormTurns = %d, want 3", c.Claude.MaxBrainstormTurns)
+	}
+}
+
+func TestForgeAndClaudeM4Defaults(t *testing.T) {
+	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Forge.GitBin != "git" {
+		t.Errorf("GitBin = %q, want git", c.Forge.GitBin)
+	}
+	if c.Forge.BaseBranch != "main" {
+		t.Errorf("BaseBranch = %q, want main", c.Forge.BaseBranch)
+	}
+	if !strings.HasSuffix(c.Forge.CloneRoot, ".wazir/clones") {
+		t.Errorf("CloneRoot = %q, want it to expand and end with .wazir/clones", c.Forge.CloneRoot)
+	}
+	if !strings.HasSuffix(c.Forge.WorktreeRoot, ".wazir/worktrees") {
+		t.Errorf("WorktreeRoot = %q, want it to expand and end with .wazir/worktrees", c.Forge.WorktreeRoot)
+	}
+	if strings.HasPrefix(c.Forge.CloneRoot, "~") {
+		t.Errorf("CloneRoot not expanded: %q", c.Forge.CloneRoot)
+	}
+	if c.Claude.PlanTimeout != 10*time.Minute {
+		t.Errorf("PlanTimeout = %s, want 10m", c.Claude.PlanTimeout)
+	}
+	if c.Claude.ExecuteTimeout != 30*time.Minute {
+		t.Errorf("ExecuteTimeout = %s, want 30m", c.Claude.ExecuteTimeout)
+	}
+	if c.Claude.ExecuteAllowedTools == "" {
+		t.Error("ExecuteAllowedTools must default non-empty")
+	}
+}
+
+func TestForgeEnvOverrides(t *testing.T) {
+	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	t.Setenv("WAZIR_FORGE_GIT_BIN", "/usr/bin/git")
+	t.Setenv("WAZIR_FORGE_CLONE_ROOT", "/srv/clones")
+	t.Setenv("WAZIR_FORGE_WORKTREE_ROOT", "/srv/wt")
+	t.Setenv("WAZIR_FORGE_BASE_BRANCH", "trunk")
+	t.Setenv("WAZIR_CLAUDE_EXECUTE_TIMEOUT", "12m")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Forge.GitBin != "/usr/bin/git" || c.Forge.CloneRoot != "/srv/clones" ||
+		c.Forge.WorktreeRoot != "/srv/wt" || c.Forge.BaseBranch != "trunk" {
+		t.Errorf("forge overrides not applied: %+v", c.Forge)
+	}
+	if c.Claude.ExecuteTimeout != 12*time.Minute {
+		t.Errorf("ExecuteTimeout = %s, want 12m", c.Claude.ExecuteTimeout)
 	}
 }

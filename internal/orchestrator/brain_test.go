@@ -2,8 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -38,14 +36,6 @@ func TestBrainstormResultHasFailureChannel(t *testing.T) {
 	}
 }
 
-func TestErrPhaseRequiresWorktreeIsSentinel(t *testing.T) {
-	// The Worker wraps the sentinel with %w; errors.Is must survive that chain.
-	wrapped := fmt.Errorf("plan: %w", ErrPhaseRequiresWorktree)
-	if !errors.Is(wrapped, ErrPhaseRequiresWorktree) {
-		t.Fatal("ErrPhaseRequiresWorktree must survive errors.Is through a wrapping chain")
-	}
-}
-
 func TestBuildTranscriptTrimsTrailingBodyNewlines(t *testing.T) {
 	c := board.Card{Title: "T", Body: "body\n\n\n", Comments: []board.Comment{{Body: "hi", IsBot: false}}}
 	got := BuildTranscript(c)
@@ -54,6 +44,14 @@ func TestBuildTranscriptTrimsTrailingBodyNewlines(t *testing.T) {
 	}
 	if !strings.Contains(got, "body\n") || !strings.Contains(got, "HUMAN: hi") {
 		t.Errorf("transcript malformed:\n%q", got)
+	}
+}
+
+func TestPlanExecuteInputsCarryWorktreePath(t *testing.T) {
+	p := PlanInput{Transcript: "t", Spec: "s", WorktreePath: "/wt"}
+	e := ExecuteInput{Transcript: "t", PlanPath: "P", WorktreePath: "/wt"}
+	if p.WorktreePath != "/wt" || e.WorktreePath != "/wt" {
+		t.Errorf("WorktreePath not carried: %+v %+v", p, e)
 	}
 }
 

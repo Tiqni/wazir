@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -85,9 +86,22 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, r.bin, args...)
-	if spec.Dir != "" {
-		cmd.Dir = spec.Dir
+	// Always run in an explicit directory. Worktree phases pass the worktree;
+	// worktree-less phases (brainstorm) leave Dir empty — give them a fresh temp
+	// dir so claude never inherits the daemon's cwd and auto-loads an unrelated
+	// project CLAUDE.md / plugin config, which would contaminate the turn with the
+	// orchestrator's own repo context instead of the card's.
+	dir := spec.Dir
+	if dir == "" {
+		tmp, err := os.MkdirTemp("", "wazir-run-")
+		if err != nil {
+			return RunResult{}, fmt.Errorf("create isolated run dir: %w", err)
+		}
+		defer os.RemoveAll(tmp)
+		dir = tmp
 	}
+	cmd.Dir = dir
+	cmd.Env = curatedEnv()
 	// After a context-driven kill, grandchild processes can keep the stdout pipe
 	// open, blocking cmd.Wait past the deadline. WaitDelay bounds that: Go force-
 	// closes the pipes shortly after the kill. It only fires once ctx is done, so
@@ -142,6 +156,35 @@ func parseEnvelope(stdout []byte) (resultEvent, error) {
 		return resultEvent{}, fmt.Errorf("unexpected claude envelope object type %q", obj.Type)
 	}
 	return obj, nil
+}
+
+// curatedEnv returns a secret-free environment for the claude child: the vars
+// the CLI needs to run + authenticate (HOME/PATH + ANTHROPIC_*/CLAUDE_*/XDG_*),
+// with WAZIR_* host secrets dropped so card-controlled tool runs can't read them.
+func curatedEnv() []string {
+	keepExact := map[string]bool{
+		"HOME": true, "PATH": true, "USER": true, "LOGNAME": true,
+		"SHELL": true, "LANG": true, "TERM": true, "TMPDIR": true,
+	}
+	keepPrefix := []string{"ANTHROPIC_", "CLAUDE_", "XDG_", "LC_", "SSL_CERT"}
+	keep := func(k string) bool {
+		if keepExact[k] {
+			return true
+		}
+		for _, p := range keepPrefix {
+			if strings.HasPrefix(k, p) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []string
+	for _, kv := range os.Environ() {
+		if i := strings.IndexByte(kv, '='); i > 0 && keep(kv[:i]) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // extractLastJSONBlock returns the body of the last fenced ```json block in text.

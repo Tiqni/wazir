@@ -104,10 +104,10 @@ func TestReceiverPipelineMovesCard(t *testing.T) {
 // noForge satisfies forge.CodeForge; nothing is exercised in the spec-ready path.
 type noForge struct{}
 
-func (noForge) Clone(ctx context.Context, repo, dest string) error                 { return nil }
-func (noForge) CreateWorktree(ctx context.Context, repo, branch, p string) error    { return nil }
-func (noForge) RemoveWorktree(ctx context.Context, p string) error                  { return nil }
-func (noForge) PushBranch(ctx context.Context, repo, branch string) error           { return nil }
+func (noForge) EnsureClone(ctx context.Context, repo string) error                          { return nil }
+func (noForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error)     { return "", nil }
+func (noForge) RemoveWorktree(ctx context.Context, repo, path string) error                 { return nil }
+func (noForge) PushBranch(ctx context.Context, repo, branch string) error                   { return nil }
 func (noForge) OpenPR(ctx context.Context, repo, branch, base, t, b string) (string, error) {
 	return "", nil
 }

@@ -26,6 +26,8 @@ func writeFakeClaude(t *testing.T, stdout string, exitCode, sleepSecs int) strin
 	}
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > \"$0.args\"\n" +
+		"pwd > \"$0.pwd\"\n" +
+		"env > \"$0.env\"\n" +
 		sleepLine +
 		"cat <<'WAZIR_EOF'\n" + stdout + "\nWAZIR_EOF\n" +
 		fmt.Sprintf("exit %d\n", exitCode)
@@ -134,6 +136,49 @@ func TestParseEnvelopeSingleObjectFallback(t *testing.T) {
 	ev, err := parseEnvelope([]byte(`{"type":"result","subtype":"success","result":"hi","session_id":"s"}`))
 	if err != nil || ev.Result != "hi" || ev.SessionID != "s" {
 		t.Fatalf("fallback failed: %+v err %v", ev, err)
+	}
+}
+
+func TestRunnerIsolatesEmptyDir(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	pwdBytes, err := os.ReadFile(bin + ".pwd")
+	if err != nil {
+		t.Fatalf("read pwd: %v", err)
+	}
+	// The shell's pwd already prints the resolved physical path; the run dir is
+	// removed by the time we read this, so don't EvalSymlinks it (that would fail).
+	got := strings.TrimSpace(string(pwdBytes))
+	cwd, _ := os.Getwd()
+	cwdResolved, _ := filepath.EvalSymlinks(cwd)
+	if got == cwd || got == cwdResolved {
+		t.Errorf("claude ran in the daemon cwd %q; want an isolated dir (else it auto-loads the repo's CLAUDE.md)", got)
+	}
+	tmpRoot, _ := filepath.EvalSymlinks(os.TempDir())
+	if !strings.HasPrefix(got, tmpRoot) {
+		t.Errorf("isolated run dir %q is not under the temp root %q", got, tmpRoot)
+	}
+}
+
+func TestRunnerCuratesEnvDropsSecrets(t *testing.T) {
+	t.Setenv("WAZIR_SECRET", "topsecret")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if strings.Contains(string(env), "WAZIR_SECRET") || strings.Contains(string(env), "topsecret") {
+		t.Errorf("curated env leaked a WAZIR_* secret:\n%s", env)
+	}
+	if !strings.Contains(string(env), "HOME=") {
+		t.Errorf("curated env dropped HOME:\n%s", env)
 	}
 }
 

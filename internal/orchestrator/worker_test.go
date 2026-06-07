@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,17 +51,32 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 	return r, nil
 }
 
-// fakeForge satisfies forge.CodeForge; PushBranch/OpenPR succeed, the rest no-op.
+// fakeForge satisfies forge.CodeForge and records the op sequence. PushBranch/
+// OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
-	pushed  bool
 	prURL   string
 	pushErr error
+	wtPath  string   // path CreateWorktree returns ("" by default)
+	pushed  bool
+	removed bool
+	calls   []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
 }
 
-func (f *fakeForge) Clone(ctx context.Context, repo, dest string) error               { return nil }
-func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch, p string) error { return nil }
-func (f *fakeForge) RemoveWorktree(ctx context.Context, p string) error               { return nil }
+func (f *fakeForge) EnsureClone(ctx context.Context, repo string) error {
+	f.calls = append(f.calls, "ensureClone")
+	return nil
+}
+func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
+	f.calls = append(f.calls, "createWorktree")
+	return f.wtPath, nil
+}
+func (f *fakeForge) RemoveWorktree(ctx context.Context, repo, path string) error {
+	f.calls = append(f.calls, "removeWorktree")
+	f.removed = true
+	return nil
+}
 func (f *fakeForge) PushBranch(ctx context.Context, repo, branch string) error {
+	f.calls = append(f.calls, "push")
 	if f.pushErr != nil {
 		return f.pushErr
 	}
@@ -68,6 +84,7 @@ func (f *fakeForge) PushBranch(ctx context.Context, repo, branch string) error {
 	return nil
 }
 func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
+	f.calls = append(f.calls, "openPR")
 	return f.prURL, nil
 }
 
@@ -116,7 +133,7 @@ func TestWorkerApprovalRunsPlanBuildPR(t *testing.T) {
 		plan:    []PlanResult{{Status: StatusPlanReady, PlanPath: "docs/plan.md"}},
 		execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}},
 	}
-	ff := &fakeForge{prURL: "https://x/pr/1"}
+	ff := &fakeForge{prURL: "https://x/pr/1", wtPath: "/wt/o-r-1"}
 	st := store.NewMemory()
 	w := NewWorker(b, ff, brain, st, nil)
 
@@ -148,7 +165,7 @@ func TestWorkerExecuteLoadsPersistedPlanPath(t *testing.T) {
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
 	st := store.NewMemory()
-	if err := st.PutCard("I1", store.CardRecord{Repo: "o/r", PlanPath: "docs/plan.md"}); err != nil {
+	if err := st.PutCard("I1", store.CardRecord{Repo: "o/r", PlanPath: "docs/plan.md", WorktreePath: "/wt/o-r-1", Branch: "feature/issue-1-x"}); err != nil {
 		t.Fatalf("PutCard: %v", err)
 	}
 	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
@@ -183,8 +200,10 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
 	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
-	ff := &fakeForge{pushErr: forge.ErrNotImplemented}
-	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
+	ff := &fakeForge{pushErr: forge.ErrNotImplemented, wtPath: "/wt/keep"}
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", WorktreePath: "/wt/keep", Branch: "feature/issue-1-x"})
+	w := NewWorker(b, ff, brain, st, nil)
 
 	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
 		t.Fatalf("Process: %v", err)
@@ -192,6 +211,41 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseFailed {
 		t.Errorf("phase = %q, want Failed (M4 forge stub)", card.Phase)
+	}
+	if ff.removed {
+		t.Error("worktree must be KEPT when push fails, but RemoveWorktree was called")
+	}
+}
+
+func TestBranchSlug(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"Add subtract", "add-subtract"},
+		{"", "card"},
+		{"!!!", "card"},
+		{"  Fix   the BUG!!  ", "fix-the-bug"},
+	}
+	for _, tc := range cases {
+		got := branchSlug(tc.in)
+		if got != tc.want {
+			t.Errorf("branchSlug(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// 50-char all-letter title: result must be <= 40 chars and have no leading/trailing dash.
+	title50 := strings.Repeat("a", 50)
+	slug50 := branchSlug(title50)
+	if len(slug50) > 40 {
+		t.Errorf("branchSlug(50-letter title) length = %d, want <= 40", len(slug50))
+	}
+	if strings.HasPrefix(slug50, "-") || strings.HasSuffix(slug50, "-") {
+		t.Errorf("branchSlug(50-letter title) = %q has leading/trailing dash", slug50)
+	}
+
+	// branchName combines issue number and slug.
+	if got := branchName(7, "Add subtract"); got != "feature/issue-7-add-subtract" {
+		t.Errorf("branchName(7, \"Add subtract\") = %q, want \"feature/issue-7-add-subtract\"", got)
 	}
 }
 
@@ -312,43 +366,105 @@ func TestWorkerSpecReadyResetsTurns(t *testing.T) {
 	}
 }
 
-func TestWorkerPlanDeferralStaysInPlanning(t *testing.T) {
+func TestWorkerApprovalCreatesWorktreeAndCleansUp(t *testing.T) {
 	ctx := context.Background()
 	b := memboard.New()
-	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
-	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
-	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "Add subtract", Phase: board.PhasePlanning})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", IssueNumber: 7})
+	brain := &scriptedBrain{
+		plan:    []PlanResult{{Status: StatusPlanReady, PlanPath: "docs/plan.md"}},
+		execute: []ExecuteResult{{Status: StatusComplete, Branch: "claude-reported-ignored"}},
+	}
+	ff := &fakeForge{prURL: "https://x/pr/1", wtPath: "/wt/o-r-7"}
+	w := NewWorker(b, ff, brain, st, nil)
 
-	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhasePlanning}); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
-	card, _ := b.GetCard(ctx, "I1")
-	if card.Phase != board.PhasePlanning {
-		t.Errorf("phase = %q, want Planning (friendly deferral, not Failed)", card.Phase)
+	wantSeq := []string{"ensureClone", "createWorktree", "push", "openPR", "removeWorktree"}
+	if strings.Join(ff.calls, ",") != strings.Join(wantSeq, ",") {
+		t.Errorf("forge call sequence = %v, want %v", ff.calls, wantSeq)
 	}
-	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
-		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
+	rec, _, _ := st.GetCard("I1")
+	if rec.Branch != "feature/issue-7-add-subtract" {
+		t.Errorf("persisted branch = %q, want feature/issue-7-add-subtract", rec.Branch)
+	}
+	if rec.WorktreePath != "/wt/o-r-7" {
+		t.Errorf("persisted worktree = %q, want /wt/o-r-7", rec.WorktreePath)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhasePRReview {
+		t.Errorf("phase = %q, want PRReview", card.Phase)
 	}
 }
 
-// The execute branch (ActExecute on a Building card) must defer the same way as
-// plan: post a comment and hold, never move to Failed.
-func TestWorkerExecuteDeferralStaysInBuilding(t *testing.T) {
+func TestWorkerFailureKeepsWorktree(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", IssueNumber: 7})
+	brain := &scriptedBrain{plan: []PlanResult{{Status: StatusFailed, Error: "boom"}}}
+	ff := &fakeForge{wtPath: "/wt/o-r-7"}
+	w := NewWorker(b, ff, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhasePlanning}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed", card.Phase)
+	}
+	if ff.removed {
+		t.Error("worktree must be KEPT on failure for debugging, but RemoveWorktree was called")
+	}
+}
+
+func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
 	ctx := context.Background()
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhaseBuilding})
-	// scriptedBrain.err fires for every method, so brain.Execute returns the sentinel.
-	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
-	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r"}) // no WorktreePath
+	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "x"}}}
+	ff := &fakeForge{}
+	w := NewWorker(b, ff, brain, st, nil)
 
 	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
 	card, _ := b.GetCard(ctx, "I1")
-	if card.Phase != board.PhaseBuilding {
-		t.Errorf("phase = %q, want Building (deferral must not move to Failed)", card.Phase)
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed (no worktree → fail fast)", card.Phase)
 	}
-	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
-		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
+	// The brain must NOT have been called (fail-fast before any model turn).
+	if len(ff.calls) != 0 {
+		t.Errorf("forge must not be touched on a worktreeless re-entry, got calls %v", ff.calls)
+	}
+}
+
+// A forge that returns an empty worktree path (no error) must fail closed rather
+// than run plan/execute in the daemon's cwd outside any worktree.
+func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", IssueNumber: 1})
+	brain := &scriptedBrain{plan: []PlanResult{{Status: StatusPlanReady, PlanPath: "p"}}}
+	ff := &fakeForge{} // wtPath "" — CreateWorktree returns ("", nil)
+	w := NewWorker(b, ff, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhasePlanning}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed (empty worktree path → fail closed)", card.Phase)
+	}
+	// The plan brain must not have run (guard fires before brain.Plan).
+	if !slices.Contains(ff.calls, "createWorktree") || slices.Contains(ff.calls, "push") {
+		t.Errorf("expected createWorktree then a stop before push, got %v", ff.calls)
 	}
 }

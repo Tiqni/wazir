@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestCardRecordRoundTripsM4Fields(t *testing.T) {
+	st := NewMemory()
+	want := CardRecord{Repo: "o/r", IssueNumber: 7, WorktreePath: "/wt/o-r-7", Branch: "feature/issue-7-x"}
+	if err := st.PutCard("I1", want); err != nil {
+		t.Fatalf("PutCard: %v", err)
+	}
+	got, ok, err := st.GetCard("I1")
+	if err != nil || !ok {
+		t.Fatalf("GetCard: ok=%v err=%v", ok, err)
+	}
+	if got.WorktreePath != want.WorktreePath || got.Branch != want.Branch {
+		t.Errorf("round-trip lost M4 fields: %+v", got)
+	}
+}
+
 func TestBboltPersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wazir.db")
 

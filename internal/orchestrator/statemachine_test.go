@@ -23,7 +23,7 @@ func TestFullStateMachine(t *testing.T) {
 		plan:    []PlanResult{{Status: StatusPlanReady}},
 		execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/auth"}},
 	}
-	ff := &fakeForge{prURL: "https://example/pr/7"}
+	ff := &fakeForge{prURL: "https://example/pr/7", wtPath: "/wt/o-r-7"}
 	st := store.NewMemory()
 	w := NewWorker(b, ff, brain, st, nil)
 
