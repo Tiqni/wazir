@@ -329,3 +329,50 @@ Deferred as deliberate seams, not gaps:
 - Cost: brainstorm now reads the repo (more tokens per turn); the existing brainstorm timeout + max-turns
   cap bound it. The daily budget breaker is a separate M5 slice.
 - The human spec-approval gate (`Spec Review → Planning`) remains the security boundary before any code runs.
+
+---
+
+## 17. Empirical findings (Task 0 spike — 2026-06-07, `claude` 2.1.168, superpowers 5.1.0)
+
+The spike (run by the user, metered) validated the recipe and **overturned the `--plugin-dir` mechanism** (§1
+"Approach A"). Findings:
+
+1. **Auth.** A relocated/empty `CLAUDE_CONFIG_DIR` does **not** use the macOS Keychain login (`-p` returned
+   `"Not logged in"`). `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) exported in the env
+   authenticates. → validates the token-auth decision; `serve` warns when neither token nor `ANTHROPIC_API_KEY`
+   is set.
+
+2. **`setting_sources`.** A repo's `.claude/settings.json` `permissions.allow` **is loaded by default and
+   widens tools** — a planted `Bash(curl:*)` ran (`result: "...returned 200"`). With **`--setting-sources user`**
+   the project settings are excluded (the planted curl was denied — appeared in `permission_denials`) while the
+   repo's `CLAUDE.md` still loaded. → **pin `setting_sources: user`** (config default becomes `user`).
+
+3. **Plugin/skill mechanism — supersedes Approach A (`--plugin-dir`).**
+   - superpowers 5.1.0 ships **skills only** (no `commands/`); the real skills are **`writing-plans`** /
+     **`executing-plans`** — the prior `/superpowers:write-plan` / `/superpowers:execute-plan` names are invalid
+     (`"Unknown command"`), a latent M4 bug never exercised end-to-end.
+   - Skills have **no headless slash-command form** (docs: *"user-invoked skills … are only available in
+     interactive mode; in `-p` mode, describe the task"*). They are invoked via the **`Skill` tool** (must be in
+     `--allowedTools`) triggered by **natural-language intent**.
+   - `--plugin-dir <version-dir>` under an empty config dir does **not** register the skills.
+   - **Confirmed working (Approach C):** a per-run `CLAUDE_CONFIG_DIR` containing a symlink to
+     `~/.claude/plugins` + a `settings.json` with `enabledPlugins: {"superpowers@claude-plugins-official": true}`,
+     run with `--allowedTools "Skill,…"` + `--setting-sources user` + a prompt that names the skill ("Use your
+     writing-plans skill to …"), **triggered `writing-plans` headless** and produced a TDD plan
+     (`is_error:false`, 8 turns, plan file written), with global `~/.claude/CLAUDE.md` suppressed.
+     `executing-plans` uses the identical mechanism (to confirm in the live integration run).
+
+### 17.1 Revised mechanism (replaces the `--plugin-dir` parts of §1/§5/§6/§10/§11)
+
+- **brainstorm:** empty per-run config dir (no plugin), `--allowedTools Read,Grep,Glob`,
+  `--setting-sources user`, cwd = the card's repo clone. (As shipped, plus the `setting_sources` knob.)
+- **plan / execute:** **seeded** per-run config dir — symlink `<plugins_dir>` → `<cfg>/plugins` and write
+  `<cfg>/settings.json` with `enabledPlugins` for the configured plugin id; `--allowedTools` includes `Skill`;
+  prompts name the skill (`writing-plans` / `executing-plans`) instead of a slash command;
+  `--setting-sources user`; cwd = the worktree. **Drop `--plugin-dir` and `DiscoverSuperpowersPluginDir`.**
+- **config:** replace `claude.plugin_dir` with `claude.plugins_dir` (default `~/.claude/plugins`) +
+  `claude.plugin_id` (default `superpowers@claude-plugins-official`); `claude.setting_sources` default becomes
+  `user`.
+- **auth:** `CLAUDE_CODE_OAUTH_TOKEN` in the daemon env (serve warns if absent).
+- §16's "set `WAZIR_CLAUDE_PLUGIN_DIR` / auto-discover newest version" prerequisite is replaced by
+  "`claude.plugins_dir` points at the real `~/.claude/plugins` registry (default)".
