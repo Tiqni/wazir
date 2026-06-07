@@ -46,6 +46,8 @@ type ClaudeBrain struct {
 }
 
 // New builds a ClaudeBrain from config. A nil logger becomes a no-op.
+// Note: cfg.MaxBrainstormTurns is intentionally not read here — the question-loop
+// cap is a Worker concern, applied via orchestrator Worker.WithMaxBrainstormTurns.
 func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 	if log == nil {
 		log = zap.NewNop()
