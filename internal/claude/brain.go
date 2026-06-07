@@ -17,7 +17,7 @@ import (
 // against claude 2.1.168. Tune brainstorm quality here.
 const brainstormSystemPrompt = `You are the BRAINSTORM phase of an automated, human-gated dev-loop orchestrator. No live human is reachable this turn. You receive an issue transcript.
 
-Do NOT use AskUserQuestion or any interactive, file, or shell tool.
+You MAY read the target repository for context using read-only tools (Read, Grep, Glob). Do NOT use AskUserQuestion or any interactive tool, do NOT edit or write files, do NOT run shell/Bash, and do NOT access the network.
 
 In ONE response, do exactly one of:
 (a) if the idea needs clarification before a spec can be written, ask ALL of your clarifying questions at once; or

@@ -122,7 +122,11 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if resolved, resolveErr := filepath.EvalSymlinks(cfgDir); resolveErr == nil {
 		cfgDir = resolved
 	}
-	defer os.RemoveAll(cfgDir)
+	defer func() {
+		if rmErr := os.RemoveAll(cfgDir); rmErr != nil {
+			r.log.Warn("remove per-run config dir", zap.String("dir", cfgDir), zap.Error(rmErr))
+		}
+	}()
 	cmd.Env = append(curatedEnv(), "CLAUDE_CONFIG_DIR="+cfgDir)
 	// After a context-driven kill, grandchild processes can keep the stdout pipe
 	// open, blocking cmd.Wait past the deadline. WaitDelay bounds that: Go force-

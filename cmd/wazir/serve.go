@@ -77,7 +77,10 @@ func runServe(ctx context.Context, addr string) error {
 	// Resolve the Superpowers plugin dir plan/execute load via --plugin-dir under
 	// the per-run isolated config dir. Fail loudly at startup, not mid-turn.
 	if cfg.Claude.PluginDir == "" {
-		home, _ := os.UserHomeDir()
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return fmt.Errorf("locate superpowers plugin: cannot determine home dir (set WAZIR_CLAUDE_PLUGIN_DIR): %w", herr)
+		}
 		pluginDir, derr := claude.DiscoverSuperpowersPluginDir(home)
 		if derr != nil {
 			return fmt.Errorf("locate superpowers plugin (set WAZIR_CLAUDE_PLUGIN_DIR): %w", derr)
