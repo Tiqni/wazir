@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	boardgh "github.com/EmadMokhtar/wazir/internal/board/github"
+	"github.com/EmadMokhtar/wazir/internal/claude"
 	"github.com/EmadMokhtar/wazir/internal/config"
 	forgegh "github.com/EmadMokhtar/wazir/internal/forge/github"
 	"github.com/EmadMokhtar/wazir/internal/githubauth"
@@ -26,7 +27,7 @@ func newServeCmd() *cobra.Command {
 	var addr string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the webhook receiver + orchestrator daemon (M1: CannedBrain)",
+		Short: "Run the webhook receiver + orchestrator daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
@@ -38,9 +39,8 @@ func newServeCmd() *cobra.Command {
 	return cmd
 }
 
-// runServe wires the GitHub board + forge, a CannedBrain, the queue, and the
-// receiver, then serves until SIGINT/SIGTERM and drains. M2 swaps CannedBrain
-// for the real internal/claude brain.
+// runServe wires the GitHub board + forge, the real claude brain, the queue,
+// and the receiver, then serves until SIGINT/SIGTERM and drains.
 func runServe(ctx context.Context, addr string) error {
 	cfg, err := config.Load(flagConfig)
 	if err != nil {
@@ -58,7 +58,16 @@ func runServe(ctx context.Context, addr string) error {
 
 	b := boardgh.New(hc, cfg, st)
 	f := forgegh.New(github.NewClient(hc))
-	worker := orchestrator.NewWorker(b, f, orchestrator.CannedBrain{}, st, logger)
+	brain := claude.New(cfg.Claude, logger)
+	worker := orchestrator.NewWorker(b, f, brain, st, logger).
+		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns)
+
+	// The queue runs on a context decoupled from the SIGINT signal so a graceful
+	// drain lets in-flight claude turns finish (bounded by the per-turn timeout)
+	// instead of cancelling them mid-flight. Defers run LIFO: Shutdown drains
+	// (queueCtx still live), then cancelQueue releases it.
+	queueCtx, cancelQueue := context.WithCancel(context.Background())
+	defer cancelQueue()
 
 	q := queue.New(st, worker.Process, queue.Options{
 		Workers: 4,
@@ -66,7 +75,7 @@ func runServe(ctx context.Context, addr string) error {
 		LockTTL: 5 * time.Minute,
 		Logger:  logger,
 	})
-	q.Start(ctx)
+	q.Start(queueCtx)
 	defer q.Shutdown()
 
 	mux := http.NewServeMux()
