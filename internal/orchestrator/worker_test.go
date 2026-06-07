@@ -164,7 +164,7 @@ func TestWorkerExecuteLoadsPersistedPlanPath(t *testing.T) {
 	b := memboard.New()
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
 	st := store.NewMemory()
-	if err := st.PutCard("I1", store.CardRecord{Repo: "o/r", PlanPath: "docs/plan.md"}); err != nil {
+	if err := st.PutCard("I1", store.CardRecord{Repo: "o/r", PlanPath: "docs/plan.md", WorktreePath: "/wt/o-r-1", Branch: "feature/issue-1-x"}); err != nil {
 		t.Fatalf("PutCard: %v", err)
 	}
 	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
@@ -200,7 +200,9 @@ func TestWorkerFailPathOnForgeNotImplemented(t *testing.T) {
 	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBuilding})
 	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "feat/x"}}}
 	ff := &fakeForge{pushErr: forge.ErrNotImplemented, wtPath: "/wt/keep"}
-	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", WorktreePath: "/wt/keep", Branch: "feature/issue-1-x"})
+	w := NewWorker(b, ff, brain, st, nil)
 
 	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
 		t.Fatalf("Process: %v", err)
@@ -415,5 +417,28 @@ func TestWorkerFailureKeepsWorktree(t *testing.T) {
 	}
 	if ff.removed {
 		t.Error("worktree must be KEPT on failure for debugging, but RemoveWorktree was called")
+	}
+}
+
+func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhaseBuilding})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r"}) // no WorktreePath
+	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Branch: "x"}}}
+	ff := &fakeForge{}
+	w := NewWorker(b, ff, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed (no worktree → fail fast)", card.Phase)
+	}
+	// The brain must NOT have been called (fail-fast before any model turn).
+	if len(ff.calls) != 0 {
+		t.Errorf("forge must not be touched on a worktreeless re-entry, got calls %v", ff.calls)
 	}
 }

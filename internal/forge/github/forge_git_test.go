@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,34 @@ func TestForgeCloneWorktreePushRemove(t *testing.T) {
 	}
 	if _, err := os.Stat(wt); !os.IsNotExist(err) {
 		t.Errorf("worktree dir still present after remove: err=%v", err)
+	}
+}
+
+func TestForgeCloneDoesNotPersistToken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := context.Background()
+	origin := seedBareOrigin(t)
+	const secret = "super-secret-pat-DO-NOT-LEAK"
+	f := New(nil, Options{
+		GitBin: "git", Base: "main", Token: secret,
+		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
+		RemoteURL: func(repo string) string { return origin },
+	})
+	const repo = "owner/name"
+	if err := f.EnsureClone(ctx, repo); err != nil {
+		t.Fatalf("EnsureClone: %v", err)
+	}
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		t.Fatalf("clonePath: %v", err)
+	}
+	cfg, err := os.ReadFile(filepath.Join(clone, ".git", "config"))
+	if err != nil {
+		t.Fatalf("read .git/config: %v", err)
+	}
+	if strings.Contains(string(cfg), secret) {
+		t.Errorf("PAT leaked into .git/config:\n%s", cfg)
 	}
 }

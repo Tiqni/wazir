@@ -101,6 +101,13 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		if err != nil {
 			return fmt.Errorf("read card record %s: %w", card.ID, err)
 		}
+		if rec.WorktreePath == "" {
+			// A real Building card always has a worktree persisted by plan(); an empty
+			// one means the card reached Building without going through Planning (e.g.
+			// a manual column drag). Fail fast rather than run execute in the daemon's
+			// cwd outside any worktree.
+			return fmt.Errorf("card is in Building without a recorded worktree (was Planning skipped?); move it back to Spec Review to re-plan")
+		}
 		return w.executePhase(ctx, card, rec.WorktreePath, rec.Branch, rec.PlanPath)
 	default:
 		return fmt.Errorf("unknown action %v", d.Action)
