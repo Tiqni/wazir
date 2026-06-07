@@ -50,17 +50,32 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 	return r, nil
 }
 
-// fakeForge satisfies forge.CodeForge; PushBranch/OpenPR succeed, the rest no-op.
+// fakeForge satisfies forge.CodeForge and records the op sequence. PushBranch/
+// OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
-	pushed  bool
 	prURL   string
 	pushErr error
+	wtPath  string   // path CreateWorktree returns ("" by default)
+	pushed  bool
+	removed bool
+	calls   []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
 }
 
-func (f *fakeForge) Clone(ctx context.Context, repo, dest string) error               { return nil }
-func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch, p string) error { return nil }
-func (f *fakeForge) RemoveWorktree(ctx context.Context, p string) error               { return nil }
+func (f *fakeForge) EnsureClone(ctx context.Context, repo string) error {
+	f.calls = append(f.calls, "ensureClone")
+	return nil
+}
+func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
+	f.calls = append(f.calls, "createWorktree")
+	return f.wtPath, nil
+}
+func (f *fakeForge) RemoveWorktree(ctx context.Context, repo, path string) error {
+	f.calls = append(f.calls, "removeWorktree")
+	f.removed = true
+	return nil
+}
 func (f *fakeForge) PushBranch(ctx context.Context, repo, branch string) error {
+	f.calls = append(f.calls, "push")
 	if f.pushErr != nil {
 		return f.pushErr
 	}
@@ -68,6 +83,7 @@ func (f *fakeForge) PushBranch(ctx context.Context, repo, branch string) error {
 	return nil
 }
 func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
+	f.calls = append(f.calls, "openPR")
 	return f.prURL, nil
 }
 

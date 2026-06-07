@@ -48,7 +48,7 @@ func TestOpenPRPostsCorrectRequest(t *testing.T) {
 
 func TestUnimplementedMethodsReturnSentinel(t *testing.T) {
 	f := &GitHubForge{}
-	if err := f.Clone(context.Background(), "o/r", "/tmp/x"); err != forge.ErrNotImplemented {
-		t.Errorf("Clone err = %v, want ErrNotImplemented", err)
+	if err := f.EnsureClone(context.Background(), "o/r"); err != forge.ErrNotImplemented {
+		t.Errorf("EnsureClone err = %v, want ErrNotImplemented", err)
 	}
 }

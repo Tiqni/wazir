@@ -46,17 +46,11 @@ func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, bod
 	return pr.GetHTMLURL(), nil
 }
 
-func (f *GitHubForge) Clone(ctx context.Context, repo, dest string) error {
-	return forge.ErrNotImplemented
+func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) error { return forge.ErrNotImplemented }
+func (f *GitHubForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
+	return "", forge.ErrNotImplemented
 }
-func (f *GitHubForge) CreateWorktree(ctx context.Context, repo, branch, path string) error {
-	return forge.ErrNotImplemented
-}
-func (f *GitHubForge) RemoveWorktree(ctx context.Context, path string) error {
-	return forge.ErrNotImplemented
-}
-func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error {
-	return forge.ErrNotImplemented
-}
+func (f *GitHubForge) RemoveWorktree(ctx context.Context, repo, path string) error { return forge.ErrNotImplemented }
+func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error   { return forge.ErrNotImplemented }
 
 var _ forge.CodeForge = (*GitHubForge)(nil)
