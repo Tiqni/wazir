@@ -323,7 +323,13 @@ uses). No new required fields; no new validation failure modes beyond non-empty 
 Deferred as deliberate seams, not gaps:
 
 - **Container / HOME isolation** of the execute run, network-egress limits — **M5**. M4 ships curated
-  env + tight tool allowlist + the human gate.
+  env + tight tool allowlist + the human gate. **Cwd isolation is done:** worktree-less phases
+  (brainstorm) run in a fresh temp dir, so claude can't inherit the daemon's cwd and auto-load an
+  unrelated project `CLAUDE.md` / plugin config (a live-test bug — brainstorm was reasoning about
+  Wazir's own repo when `serve` ran from it). Still **M5**: a per-run isolated `HOME`/`~/.claude` so the
+  *global* `~/.claude/CLAUDE.md` and globally-enabled plugins also can't bleed into a turn. (Open
+  follow-up, not M4: brainstorm currently has *no* repo context at all, so it asks foundational
+  questions; a deliberately repo-aware brainstorm — feeding a target-repo summary — is a future option.)
 - **Daily budget circuit-breaker, `runs` bucket + per-run cost persistence, `/runs` endpoint** — **M5**.
   M4 logs plan/execute cost via zap (reusing the M2 logging).
 - **Retries / backoff** on transient git/PR errors — **M5**. M4 fails loudly to `Failed`.
