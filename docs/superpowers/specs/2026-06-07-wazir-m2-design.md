@@ -269,8 +269,10 @@ parses via fig's string→duration (verify; else parse a string field).
 
 ## 11. Testing strategy
 
-- **Fake `claude` binary** via `CLAUDE_BIN` — the Go `TestHelperProcess` pattern (re-exec `os.Args[0]`
-  with `-test.run=TestHelperProcess` and an env switch) so no shell script ships and it's cross-platform.
+- **Fake `claude` binary** via `CLAUDE_BIN`. (As built: a small `#!/bin/sh` script written to a temp
+  dir — simpler than the originally-considered `TestHelperProcess` re-exec, and the runner builds its
+  own argv so the helper-process pattern didn't fit cleanly. Unix-only, which matches the project's
+  darwin/linux targets.)
   The helper prints a canned JSON-array envelope to stdout (and can sleep / exit non-zero / write
   stderr on demand).
 - **`Runner` unit tests:** happy path (array → result text → fenced block); embedded/escaped fences in
