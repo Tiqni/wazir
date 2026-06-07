@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
@@ -229,5 +230,97 @@ func TestWorkerIdempotentOnReprocessedComment(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseSpecReview {
 		t.Errorf("phase = %q, want SpecReview (unchanged by the replay)", card.Phase)
+	}
+}
+
+func TestWorkerBrainstormFailedGoesToFailed(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: BrainstormFailed, Error: "bad contract"}}}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed", card.Phase)
+	}
+}
+
+func TestWorkerBrainstormCountsTurns(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	st := store.NewMemory()
+	w := NewWorker(b, &fakeForge{}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 1 {
+		t.Errorf("BrainstormTurns = %d, want 1", rec.BrainstormTurns)
+	}
+}
+
+func TestWorkerBrainstormCapEscalates(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(b, &fakeForge{}, brain, st, nil).WithMaxBrainstormTurns(2)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseAwaitingAnswers {
+		t.Errorf("phase = %q, want AwaitingAnswers (escalation stays put)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "limit") {
+		t.Errorf("want a single 'limit' escalation comment, got %+v", card.Comments)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 2 {
+		t.Errorf("BrainstormTurns = %d, want unchanged 2 (no increment past the cap)", rec.BrainstormTurns)
+	}
+}
+
+func TestWorkerSpecReadyResetsTurns(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 3})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(b, &fakeForge{}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if rec, _, _ := st.GetCard("I1"); rec.BrainstormTurns != 0 {
+		t.Errorf("BrainstormTurns = %d, want reset to 0", rec.BrainstormTurns)
+	}
+}
+
+func TestWorkerPlanDeferralStaysInPlanning(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhasePlanning})
+	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhasePlanning {
+		t.Errorf("phase = %q, want Planning (friendly deferral, not Failed)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
+		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
 	}
 }

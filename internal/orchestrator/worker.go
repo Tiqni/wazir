@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,9 @@ import (
 	"github.com/EmadMokhtar/wazir/internal/store"
 )
 
+// defaultMaxBrainstormTurns caps the clarifying-question loop (M2 spec §6).
+const defaultMaxBrainstormTurns = 8
+
 // Worker executes a Resolver Decision against the ports. It owns the
 // deterministic mapping from a Brain result to board writes.
 type Worker struct {
@@ -21,7 +25,8 @@ type Worker struct {
 	store    store.Store
 	resolver Resolver
 	log      *zap.Logger
-	base     string // PR base branch
+	base               string // PR base branch
+	maxBrainstormTurns int    // cap on the clarifying-question loop (M2)
 }
 
 // NewWorker builds a Worker. A nil logger is replaced with a no-op.
@@ -29,7 +34,16 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main"}
+	return &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main", maxBrainstormTurns: defaultMaxBrainstormTurns}
+}
+
+// WithMaxBrainstormTurns overrides the question-loop cap (e.g. from config).
+// A non-positive n is ignored, keeping the default. Returns w for chaining.
+func (w *Worker) WithMaxBrainstormTurns(n int) *Worker {
+	if n > 0 {
+		w.maxBrainstormTurns = n
+	}
+	return w
 }
 
 // Process resolves and executes one event for a card. A handled failure moves
@@ -92,7 +106,24 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		return fmt.Errorf("brainstorm: %w", err)
 	}
 	switch res.Status {
+	case BrainstormFailed:
+		return fmt.Errorf("brainstorm failed: %s", res.Error)
 	case NeedsAnswers:
+		rec, _, err := w.store.GetCard(card.ID)
+		if err != nil {
+			return fmt.Errorf("read card record %s: %w", card.ID, err)
+		}
+		if rec.BrainstormTurns >= w.maxBrainstormTurns {
+			msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", w.maxBrainstormTurns)
+			if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
+				return err
+			}
+			return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
+		}
+		rec.BrainstormTurns++
+		if err := w.store.PutCard(card.ID, rec); err != nil {
+			return fmt.Errorf("persist brainstorm turn: %w", err)
+		}
 		var sb strings.Builder
 		sb.WriteString("I need a few answers before writing the spec:\n")
 		for _, q := range res.Questions {
@@ -104,6 +135,12 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
 	case SpecReady:
+		if rec, _, err := w.store.GetCard(card.ID); err == nil {
+			rec.BrainstormTurns = 0
+			if err := w.store.PutCard(card.ID, rec); err != nil {
+				w.log.Error("reset brainstorm turns", zap.String("card", card.ID), zap.Error(err))
+			}
+		}
 		if err := w.board.SetBody(ctx, card.ID, res.SpecMarkdown); err != nil {
 			return err
 		}
@@ -122,6 +159,10 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 	}
 	res, err := w.brain.Plan(ctx, PlanInput{Transcript: BuildTranscript(card), Spec: card.Body})
 	if err != nil {
+		if errors.Is(err, ErrPhaseRequiresWorktree) {
+			return w.board.PostComment(ctx, card.ID,
+				"✅ Spec approved — planning & build run in an isolated worktree, which lands in M4. The card will stay in Planning until then.")
+		}
 		return fmt.Errorf("plan: %w", err)
 	}
 	if res.Status != StatusPlanReady {
@@ -139,6 +180,10 @@ func (w *Worker) plan(ctx context.Context, card board.Card) error {
 func (w *Worker) executePhase(ctx context.Context, card board.Card, planPath string) error {
 	res, err := w.brain.Execute(ctx, ExecuteInput{Transcript: BuildTranscript(card), PlanPath: planPath})
 	if err != nil {
+		if errors.Is(err, ErrPhaseRequiresWorktree) {
+			return w.board.PostComment(ctx, card.ID,
+				"⏸️ Build runs in an isolated worktree, which lands in M4. Holding here until then.")
+		}
 		return fmt.Errorf("execute: %w", err)
 	}
 	if res.Status != StatusComplete {
