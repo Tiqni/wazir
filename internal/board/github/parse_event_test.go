@@ -114,3 +114,31 @@ func TestParseDropsForeignRepo(t *testing.T) {
 		t.Errorf("event from non-allow-listed repo should be ignored, got %v", ev.Kind)
 	}
 }
+
+func TestParseProjectsV2ItemDropsBotSelfMove(t *testing.T) {
+	b := newParser() // botLogin = "wazir-bot"
+	payload := loadFixture(t, "projects_v2_item_bot.json")
+	h := headersFor("projects_v2_item", "d9", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want Ignore (bot self-move loop prevention)", ev.Kind)
+	}
+}
+
+func TestParseProjectsV2ItemKeepsHumanMove(t *testing.T) {
+	b := newParser()
+	payload := loadFixture(t, "projects_v2_item.json") // sender = "alice"
+	h := headersFor("projects_v2_item", "d10", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventPhaseChanged || ev.CardID != "ISSUE_NODE_1" {
+		t.Errorf("event = %+v, want PhaseChanged for a human move", ev)
+	}
+}
