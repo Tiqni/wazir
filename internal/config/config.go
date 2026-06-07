@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kkyr/fig"
@@ -24,14 +25,26 @@ type Config struct {
 	BotLogin string        `fig:"bot_login"`
 	Store    StoreConfig   `fig:"store"`
 	Claude   ClaudeConfig  `fig:"claude"`
+	Forge    ForgeConfig   `fig:"forge"`
 }
 
 // ClaudeConfig configures the headless claude-CLI brain (M2; init-plan §8.4/§11).
 type ClaudeConfig struct {
-	Bin                string        `fig:"bin" default:"claude"`             // WAZIR_CLAUDE_BIN
-	Model              string        `fig:"model"`                            // WAZIR_CLAUDE_MODEL ("" = CLI default)
-	Timeout            time.Duration `fig:"timeout" default:"5m"`             // WAZIR_CLAUDE_TIMEOUT
-	MaxBrainstormTurns int           `fig:"max_brainstorm_turns" default:"8"` // WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS
+	Bin                 string        `fig:"bin" default:"claude"`             // WAZIR_CLAUDE_BIN
+	Model               string        `fig:"model"`                            // WAZIR_CLAUDE_MODEL ("" = CLI default)
+	Timeout             time.Duration `fig:"timeout" default:"5m"`             // WAZIR_CLAUDE_TIMEOUT
+	MaxBrainstormTurns  int           `fig:"max_brainstorm_turns" default:"8"` // WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS
+	PlanTimeout         time.Duration `fig:"plan_timeout" default:"10m"`       // WAZIR_CLAUDE_PLAN_TIMEOUT
+	ExecuteTimeout      time.Duration `fig:"execute_timeout" default:"30m"`    // WAZIR_CLAUDE_EXECUTE_TIMEOUT
+	ExecuteAllowedTools string        `fig:"execute_allowed_tools" default:"Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"`
+}
+
+// ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).
+type ForgeConfig struct {
+	GitBin       string `fig:"git_bin" default:"git"`                      // WAZIR_FORGE_GIT_BIN
+	CloneRoot    string `fig:"clone_root" default:"~/.wazir/clones"`       // WAZIR_FORGE_CLONE_ROOT
+	WorktreeRoot string `fig:"worktree_root" default:"~/.wazir/worktrees"` // WAZIR_FORGE_WORKTREE_ROOT
+	BaseBranch   string `fig:"base_branch" default:"main"`                 // WAZIR_FORGE_BASE_BRANCH
 }
 
 // GitHubConfig holds auth + GitHub-side identity. Secrets (pat, webhook_secret,
@@ -82,6 +95,8 @@ func Load(path string) (Config, error) {
 	if err := fig.Load(&c, opts...); err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
+	c.Forge.CloneRoot = expandHome(c.Forge.CloneRoot)
+	c.Forge.WorktreeRoot = expandHome(c.Forge.WorktreeRoot)
 	if err := c.validate(); err != nil {
 		return Config{}, err
 	}
@@ -111,6 +126,16 @@ func (c Config) validate() error {
 		return fmt.Errorf("project.number must be set and > 0 (got %d)", c.Project.Number)
 	}
 	return nil
+}
+
+// expandHome turns a leading ~ into $HOME. Leaves other paths untouched.
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+		}
+	}
+	return p
 }
 
 func fileExists(path string) bool {

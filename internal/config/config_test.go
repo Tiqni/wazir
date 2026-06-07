@@ -153,3 +153,53 @@ func TestClaudeEnvOverrides(t *testing.T) {
 		t.Errorf("MaxBrainstormTurns = %d, want 3", c.Claude.MaxBrainstormTurns)
 	}
 }
+
+func TestForgeAndClaudeM4Defaults(t *testing.T) {
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Forge.GitBin != "git" {
+		t.Errorf("GitBin = %q, want git", c.Forge.GitBin)
+	}
+	if c.Forge.BaseBranch != "main" {
+		t.Errorf("BaseBranch = %q, want main", c.Forge.BaseBranch)
+	}
+	if c.Forge.CloneRoot == "" || c.Forge.WorktreeRoot == "" {
+		t.Errorf("clone/worktree roots must default non-empty: %+v", c.Forge)
+	}
+	if c.Claude.PlanTimeout != 10*time.Minute {
+		t.Errorf("PlanTimeout = %s, want 10m", c.Claude.PlanTimeout)
+	}
+	if c.Claude.ExecuteTimeout != 30*time.Minute {
+		t.Errorf("ExecuteTimeout = %s, want 30m", c.Claude.ExecuteTimeout)
+	}
+	if c.Claude.ExecuteAllowedTools == "" {
+		t.Error("ExecuteAllowedTools must default non-empty")
+	}
+}
+
+func TestForgeEnvOverrides(t *testing.T) {
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	t.Setenv("WAZIR_FORGE_GIT_BIN", "/usr/bin/git")
+	t.Setenv("WAZIR_FORGE_CLONE_ROOT", "/srv/clones")
+	t.Setenv("WAZIR_FORGE_WORKTREE_ROOT", "/srv/wt")
+	t.Setenv("WAZIR_FORGE_BASE_BRANCH", "trunk")
+	t.Setenv("WAZIR_CLAUDE_EXECUTE_TIMEOUT", "12m")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Forge.GitBin != "/usr/bin/git" || c.Forge.CloneRoot != "/srv/clones" ||
+		c.Forge.WorktreeRoot != "/srv/wt" || c.Forge.BaseBranch != "trunk" {
+		t.Errorf("forge overrides not applied: %+v", c.Forge)
+	}
+	if c.Claude.ExecuteTimeout != 12*time.Minute {
+		t.Errorf("ExecuteTimeout = %s, want 12m", c.Claude.ExecuteTimeout)
+	}
+}

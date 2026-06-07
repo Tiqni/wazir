@@ -39,3 +39,18 @@ claude:
   model: ""              # "" = CLI default
   timeout: 5m            # per-invocation deadline
   max_brainstorm_turns: 8 # cap on the clarifying-question loop
+
+# Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
+# each in-flight card gets its own worktree. Auth reuses github.pat — no git
+# credential lives in any worktree's .git/config.
+forge:
+  git_bin: git
+  clone_root: ~/.wazir/clones
+  worktree_root: ~/.wazir/worktrees
+  base_branch: main
+
+# (M4 additions to the claude section — merge into the existing claude block.)
+# claude:
+#   plan_timeout: 10m
+#   execute_timeout: 30m   # execute needs longer than brainstorm
+#   execute_allowed_tools: "Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
