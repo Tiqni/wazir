@@ -25,6 +25,7 @@ const (
 // BrainstormInput / BrainstormResult — the §9 brainstorm contract.
 type BrainstormInput struct {
 	Transcript string
+	RepoPath   string // M5: the card's repo clone; used as the claude cmd.Dir so the target repo's CLAUDE.md/AGENTS.md load
 }
 type BrainstormResult struct {
 	Status       BrainstormStatus

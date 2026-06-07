@@ -130,7 +130,14 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
 	}
 
-	res, err := w.brain.Brainstorm(ctx, BrainstormInput{Transcript: BuildTranscript(card)})
+	// Repo-aware brainstorm (M5): clone the target repo so the turn runs with cwd =
+	// the clone and loads the repo's own CLAUDE.md/AGENTS.md. Done *after* the cap
+	// check so an about-to-escalate card never triggers a clone.
+	clonePath, err := w.forge.EnsureClone(ctx, card.Repo)
+	if err != nil {
+		return fmt.Errorf("ensure clone: %w", err)
+	}
+	res, err := w.brain.Brainstorm(ctx, BrainstormInput{Transcript: BuildTranscript(card), RepoPath: clonePath})
 	if err != nil {
 		return fmt.Errorf("brainstorm: %w", err)
 	}

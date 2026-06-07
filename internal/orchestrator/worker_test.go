@@ -20,12 +20,14 @@ type scriptedBrain struct {
 	execute    []ExecuteResult
 	err        error
 
-	brainstormCalls  int    // how many times Brainstorm was invoked
-	lastExecPlanPath string // records the PlanPath the last Execute call received
+	brainstormCalls        int    // how many times Brainstorm was invoked
+	lastExecPlanPath       string // records the PlanPath the last Execute call received
+	lastBrainstormRepoPath string // records the RepoPath the last Brainstorm call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
 	s.brainstormCalls++
+	s.lastBrainstormRepoPath = in.RepoPath
 	if s.err != nil {
 		return BrainstormResult{}, s.err
 	}
@@ -107,6 +109,46 @@ func TestWorkerBrainstormNeedsAnswers(t *testing.T) {
 	}
 	if len(card.Comments) != 1 {
 		t.Errorf("want 1 posted question comment, got %d", len(card.Comments))
+	}
+}
+
+func TestWorkerBrainstormUsesRepoClone(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("brainstorm must EnsureClone the repo; calls=%v", ff.calls)
+	}
+	if brain.lastBrainstormRepoPath != "/clone/o-r" {
+		t.Errorf("brainstorm RepoPath = %q, want /clone/o-r (the clone, as cwd)", brain.lastBrainstormRepoPath)
+	}
+}
+
+func TestWorkerBrainstormCapSkipsClone(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, st, nil).WithMaxBrainstormTurns(2)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("the question-cap escalation must NOT clone (no work past the cap); calls=%v", ff.calls)
+	}
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain called %d times past the cap, want 0", brain.brainstormCalls)
 	}
 }
 
