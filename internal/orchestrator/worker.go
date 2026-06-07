@@ -19,12 +19,12 @@ const defaultMaxBrainstormTurns = 8
 // Worker executes a Resolver Decision against the ports. It owns the
 // deterministic mapping from a Brain result to board writes.
 type Worker struct {
-	board    board.Board
-	forge    forge.CodeForge
-	brain    Brain
-	store    store.Store
-	resolver Resolver
-	log      *zap.Logger
+	board              board.Board
+	forge              forge.CodeForge
+	brain              Brain
+	store              store.Store
+	resolver           Resolver
+	log                *zap.Logger
 	base               string // PR base branch
 	maxBrainstormTurns int    // cap on the clarifying-question loop (M2)
 }
@@ -135,7 +135,9 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseAwaitingAnswers)
 	case SpecReady:
-		if rec, _, err := w.store.GetCard(card.ID); err == nil {
+		if rec, _, err := w.store.GetCard(card.ID); err != nil {
+			w.log.Error("reset brainstorm turns: read card record", zap.String("card", card.ID), zap.Error(err))
+		} else {
 			rec.BrainstormTurns = 0
 			if err := w.store.PutCard(card.ID, rec); err != nil {
 				w.log.Error("reset brainstorm turns", zap.String("card", card.ID), zap.Error(err))

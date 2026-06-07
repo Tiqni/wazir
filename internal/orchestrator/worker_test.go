@@ -324,3 +324,25 @@ func TestWorkerPlanDeferralStaysInPlanning(t *testing.T) {
 		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
 	}
 }
+
+// The execute branch (ActExecute on a Building card) must defer the same way as
+// plan: post a comment and hold, never move to Failed.
+func TestWorkerExecuteDeferralStaysInBuilding(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Title: "t", Phase: board.PhaseBuilding})
+	// scriptedBrain.err fires for every method, so brain.Execute returns the sentinel.
+	brain := &scriptedBrain{err: ErrPhaseRequiresWorktree}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseBuilding {
+		t.Errorf("phase = %q, want Building (deferral must not move to Failed)", card.Phase)
+	}
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "M4") {
+		t.Errorf("want a single M4-deferral comment, got %+v", card.Comments)
+	}
+}
