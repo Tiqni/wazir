@@ -20,12 +20,14 @@ type scriptedBrain struct {
 	execute    []ExecuteResult
 	err        error
 
-	brainstormCalls  int    // how many times Brainstorm was invoked
-	lastExecPlanPath string // records the PlanPath the last Execute call received
+	brainstormCalls        int    // how many times Brainstorm was invoked
+	lastExecPlanPath       string // records the PlanPath the last Execute call received
+	lastBrainstormRepoPath string // records the RepoPath the last Brainstorm call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
 	s.brainstormCalls++
+	s.lastBrainstormRepoPath = in.RepoPath
 	if s.err != nil {
 		return BrainstormResult{}, s.err
 	}
@@ -54,17 +56,18 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 // fakeForge satisfies forge.CodeForge and records the op sequence. PushBranch/
 // OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
-	prURL   string
-	pushErr error
-	wtPath  string   // path CreateWorktree returns ("" by default)
-	pushed  bool
-	removed bool
-	calls   []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
+	prURL     string
+	pushErr   error
+	wtPath    string // path CreateWorktree returns ("" by default)
+	clonePath string // path EnsureClone returns ("" by default)
+	pushed    bool
+	removed   bool
+	calls     []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
 }
 
-func (f *fakeForge) EnsureClone(ctx context.Context, repo string) error {
+func (f *fakeForge) EnsureClone(ctx context.Context, repo string) (string, error) {
 	f.calls = append(f.calls, "ensureClone")
-	return nil
+	return f.clonePath, nil
 }
 func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
 	f.calls = append(f.calls, "createWorktree")
@@ -109,6 +112,46 @@ func TestWorkerBrainstormNeedsAnswers(t *testing.T) {
 	}
 }
 
+func TestWorkerBrainstormUsesRepoClone(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("brainstorm must EnsureClone the repo; calls=%v", ff.calls)
+	}
+	if brain.lastBrainstormRepoPath != "/clone/o-r" {
+		t.Errorf("brainstorm RepoPath = %q, want /clone/o-r (the clone, as cwd)", brain.lastBrainstormRepoPath)
+	}
+}
+
+func TestWorkerBrainstormCapSkipsClone(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, st, nil).WithMaxBrainstormTurns(2)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("the question-cap escalation must NOT clone (no work past the cap); calls=%v", ff.calls)
+	}
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain called %d times past the cap, want 0", brain.brainstormCalls)
+	}
+}
+
 func TestWorkerBrainstormSpecReady(t *testing.T) {
 	ctx := context.Background()
 	b := memboard.New()
@@ -122,6 +165,44 @@ func TestWorkerBrainstormSpecReady(t *testing.T) {
 	card, _ := b.GetCard(ctx, "I1")
 	if card.Phase != board.PhaseSpecReview || card.Body != "SPEC" {
 		t.Errorf("phase=%q body=%q, want SpecReview/SPEC", card.Phase, card.Body)
+	}
+}
+
+func TestWorkerSpecReadyPostsDecisionNote(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(b, &fakeForge{}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if card.Phase != board.PhaseSpecReview || card.Body != "SPEC" {
+		t.Errorf("phase=%q body=%q, want SpecReview/SPEC", card.Phase, card.Body)
+	}
+	// Jumping straight to a spec (no prior question rounds) must leave a visible note.
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "skipped the clarifying-question round") {
+		t.Errorf("want a 'jumped to spec' note, got %+v", card.Comments)
+	}
+}
+
+func TestWorkerSpecReadyAfterRoundsNote(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(b, &fakeForge{}, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	card, _ := b.GetCard(ctx, "I1")
+	if len(card.Comments) != 1 || !strings.Contains(card.Comments[0].Body, "after 2 clarifying rounds") {
+		t.Errorf("want an 'after 2 rounds' note, got %+v", card.Comments)
 	}
 }
 

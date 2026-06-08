@@ -28,7 +28,7 @@ func TestIntegrationForgeRoundTrip(t *testing.T) {
 		GitBin: "git", Base: "main", Token: pat,
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 	})
-	if err := f.EnsureClone(ctx, repo); err != nil {
+	if _, err := f.EnsureClone(ctx, repo); err != nil {
 		t.Fatalf("EnsureClone: %v", err)
 	}
 	branch := "wazir-it/" + t.Name()

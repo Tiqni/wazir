@@ -108,8 +108,8 @@ func TestPlanReady(t *testing.T) {
 		t.Errorf("cmd.Dir = %q, want worktree %q", strings.TrimSpace(string(pwd)), wt)
 	}
 	args, _ := os.ReadFile(bin + ".args")
-	if !strings.Contains(string(args), "/superpowers:write-plan") {
-		t.Errorf("plan prompt must invoke the write-plan slash command; args:\n%s", args)
+	if !strings.Contains(string(args), "writing-plans") {
+		t.Errorf("plan prompt must name the writing-plans skill; args:\n%s", args)
 	}
 	if strings.Contains(string(args), "Bash(") {
 		t.Errorf("plan must not allow Bash; args:\n%s", args)
@@ -143,8 +143,8 @@ func TestExecuteComplete(t *testing.T) {
 		t.Errorf("cmd.Dir = %q, want worktree %q", strings.TrimSpace(string(pwd)), wt)
 	}
 	args, _ := os.ReadFile(bin + ".args")
-	if !strings.Contains(string(args), "/superpowers:execute-plan") {
-		t.Errorf("execute prompt must invoke the execute-plan slash command; args:\n%s", args)
+	if !strings.Contains(string(args), "executing-plans") {
+		t.Errorf("execute prompt must name the executing-plans skill; args:\n%s", args)
 	}
 	if !strings.Contains(string(args), "Bash(git:*)") {
 		t.Errorf("execute must carry the configured allowlist; args:\n%s", args)
@@ -191,6 +191,79 @@ func TestExecuteFailsOnCLIError(t *testing.T) {
 
 func TestClaudeBrainImplementsBrain(t *testing.T) {
 	var _ orchestrator.Brain = (*ClaudeBrain)(nil)
+}
+
+func TestBrainstormRunsInRepoCloneReadOnly(t *testing.T) {
+	result := "```json\n{\"phase\":\"brainstorm\",\"status\":\"needs_answers\",\"questions\":[\"q?\"],\"spec_markdown\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, Timeout: 5 * time.Second, PluginsDir: t.TempDir(), PluginID: "superpowers@claude-plugins-official", SettingSources: "user"}, zap.NewNop())
+	clone := t.TempDir()
+	if _, err := br.Brainstorm(context.Background(), orchestrator.BrainstormInput{Transcript: "x", RepoPath: clone}); err != nil {
+		t.Fatalf("Brainstorm: %v", err)
+	}
+	pwd, _ := os.ReadFile(bin + ".pwd")
+	gotReal, _ := filepath.EvalSymlinks(strings.TrimSpace(string(pwd)))
+	cloneReal, _ := filepath.EvalSymlinks(clone)
+	if gotReal != cloneReal {
+		t.Errorf("brainstorm cmd.Dir = %q, want the repo clone %q", strings.TrimSpace(string(pwd)), clone)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "Read,Grep,Glob") {
+		t.Errorf("brainstorm must allow read-only exploration; args:\n%s", args)
+	}
+	if !strings.Contains(string(args), "--setting-sources") || !strings.Contains(string(args), "user") {
+		t.Errorf("brainstorm must carry --setting-sources; args:\n%s", args)
+	}
+	// Brainstorm needs no plugin: the config dir must NOT be seeded even though the
+	// brain is configured with a plugins dir.
+	if link, _ := os.ReadFile(bin + ".plugins"); strings.TrimSpace(string(link)) != "" {
+		t.Errorf("brainstorm must NOT seed a plugin; got symlink %q", strings.TrimSpace(string(link)))
+	}
+}
+
+func TestPlanAndExecuteSeedPluginAndUseSkill(t *testing.T) {
+	pluginsDir := t.TempDir()
+	cfg := func(bin string) config.ClaudeConfig {
+		return config.ClaudeConfig{
+			Bin: bin, PlanTimeout: 5 * time.Second, ExecuteTimeout: 5 * time.Second,
+			ExecuteAllowedTools: "Skill,Read,Edit", PluginsDir: pluginsDir,
+			PluginID: "superpowers@claude-plugins-official", SettingSources: "user",
+		}
+	}
+
+	// Plan: seeds the registry, allows the Skill tool, and names the writing-plans skill.
+	planJSON := "```json\n{\"phase\":\"plan\",\"status\":\"plan_ready\",\"plan_path\":\"docs/plan.md\",\"summary\":\"s\",\"error\":\"\"}\n```"
+	planBin := writeFakeClaude(t, envelope(planJSON, false, "success"), 0, 0)
+	if _, err := New(cfg(planBin), zap.NewNop()).Plan(context.Background(), orchestrator.PlanInput{Spec: "s", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if link, _ := os.ReadFile(planBin + ".plugins"); strings.TrimSpace(string(link)) != pluginsDir {
+		t.Errorf("plan must seed the plugins registry; symlink = %q, want %q", strings.TrimSpace(string(link)), pluginsDir)
+	}
+	planArgs, _ := os.ReadFile(planBin + ".args")
+	if !strings.Contains(string(planArgs), "Skill") {
+		t.Errorf("plan must allow the Skill tool; args:\n%s", planArgs)
+	}
+	if !strings.Contains(string(planArgs), "writing-plans") {
+		t.Errorf("plan prompt must name the writing-plans skill; args:\n%s", planArgs)
+	}
+
+	// Execute (the highest-risk phase): same seeding + Skill, names executing-plans.
+	execJSON := "```json\n{\"phase\":\"execute\",\"status\":\"complete\",\"branch\":\"b\",\"commits\":[\"a\"],\"test_summary\":\"ok\",\"notes\":\"n\",\"error\":\"\"}\n```"
+	execBin := writeFakeClaude(t, envelope(execJSON, false, "success"), 0, 0)
+	if _, err := New(cfg(execBin), zap.NewNop()).Execute(context.Background(), orchestrator.ExecuteInput{PlanPath: "docs/plan.md", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if link, _ := os.ReadFile(execBin + ".plugins"); strings.TrimSpace(string(link)) != pluginsDir {
+		t.Errorf("execute must seed the plugins registry; symlink = %q, want %q", strings.TrimSpace(string(link)), pluginsDir)
+	}
+	execArgs, _ := os.ReadFile(execBin + ".args")
+	if !strings.Contains(string(execArgs), "Skill") {
+		t.Errorf("execute must allow the Skill tool; args:\n%s", execArgs)
+	}
+	if !strings.Contains(string(execArgs), "executing-plans") {
+		t.Errorf("execute prompt must name the executing-plans skill; args:\n%s", execArgs)
+	}
 }
 
 func TestSplitToolsTrimsAndDropsEmpties(t *testing.T) {

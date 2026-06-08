@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,9 @@ func writeFakeClaude(t *testing.T, stdout string, exitCode, sleepSecs int) strin
 		"printf '%s\\n' \"$@\" > \"$0.args\"\n" +
 		"pwd > \"$0.pwd\"\n" +
 		"env > \"$0.env\"\n" +
+		// Capture what the runner seeded into the per-run config dir (empty when unseeded).
+		"readlink \"$CLAUDE_CONFIG_DIR/plugins\" > \"$0.plugins\" 2>/dev/null || true\n" +
+		"cat \"$CLAUDE_CONFIG_DIR/settings.json\" > \"$0.settings\" 2>/dev/null || true\n" +
 		sleepLine +
 		"cat <<'WAZIR_EOF'\n" + stdout + "\nWAZIR_EOF\n" +
 		fmt.Sprintf("exit %d\n", exitCode)
@@ -179,6 +183,212 @@ func TestRunnerCuratesEnvDropsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(string(env), "HOME=") {
 		t.Errorf("curated env dropped HOME:\n%s", env)
+	}
+}
+
+func TestRunnerRelocatesConfigDirPerRun(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+
+	readConfigDir := func() string {
+		if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		env, err := os.ReadFile(bin + ".env")
+		if err != nil {
+			t.Fatalf("read env: %v", err)
+		}
+		for _, line := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+				return v
+			}
+		}
+		t.Fatal("CLAUDE_CONFIG_DIR not set in claude child env")
+		return ""
+	}
+
+	first := readConfigDir()
+	tmpRoot, _ := filepath.EvalSymlinks(os.TempDir())
+	// The runner resolves cfgDir via EvalSymlinks before removal, so first is
+	// already the canonical path. Use it directly rather than calling EvalSymlinks
+	// on an already-deleted directory (which returns "" on all platforms).
+	if !strings.HasPrefix(first, tmpRoot) {
+		t.Errorf("config dir %q not under temp root %q", first, tmpRoot)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("config dir %q must be removed after the run (stat err=%v)", first, err)
+	}
+	if second := readConfigDir(); first == second {
+		t.Errorf("config dir must be distinct per run; got %q twice", first)
+	}
+}
+
+func TestRunnerKeepsOAuthTokenAndRealHome(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok-123")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, _ := os.ReadFile(bin + ".env")
+	if !strings.Contains(string(env), "CLAUDE_CODE_OAUTH_TOKEN=tok-123") {
+		t.Errorf("curated env dropped the OAuth token:\n%s", env)
+	}
+	if !strings.Contains(string(env), "HOME="+os.Getenv("HOME")) {
+		t.Errorf("curated env must preserve the real HOME=%q:\n%s", os.Getenv("HOME"), env)
+	}
+}
+
+func TestRunnerSeedsConfigDirForPlanExecute(t *testing.T) {
+	pluginsDir := t.TempDir() // stand-in for the real ~/.claude/plugins registry
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{
+		Prompt: "x", Timeout: 5 * time.Second,
+		PluginsDir: pluginsDir, EnabledPlugin: "superpowers@claude-plugins-official", SettingSources: "user",
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The child saw a CLAUDE_CONFIG_DIR/plugins symlink pointing at the registry...
+	link, _ := os.ReadFile(bin + ".plugins")
+	if strings.TrimSpace(string(link)) != pluginsDir {
+		t.Errorf("seeded plugins symlink = %q, want %q", strings.TrimSpace(string(link)), pluginsDir)
+	}
+	// ...and a settings.json enabling only the configured plugin.
+	settings, _ := os.ReadFile(bin + ".settings")
+	if !strings.Contains(string(settings), `"superpowers@claude-plugins-official":true`) {
+		t.Errorf("seeded settings.json missing enabledPlugins entry; got:\n%s", settings)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "--setting-sources") || !strings.Contains(string(args), "user") {
+		t.Errorf("argv missing --setting-sources user; got:\n%s", args)
+	}
+}
+
+func TestRunnerDoesNotSeedWhenPluginsDirEmpty(t *testing.T) {
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// brainstorm-style run (no PluginsDir): the config dir stays bare — no plugins symlink.
+	link, _ := os.ReadFile(bin + ".plugins")
+	if strings.TrimSpace(string(link)) != "" {
+		t.Errorf("unseeded run must not symlink plugins; got %q", strings.TrimSpace(string(link)))
+	}
+}
+
+func TestSeedConfigDir(t *testing.T) {
+	cfgDir := t.TempDir()
+	pluginsDir := t.TempDir()
+	if err := seedConfigDir(cfgDir, pluginsDir, "superpowers@claude-plugins-official"); err != nil {
+		t.Fatalf("seedConfigDir: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(cfgDir, "plugins"))
+	if err != nil || target != pluginsDir {
+		t.Errorf("plugins symlink = %q (err %v), want %q", target, err, pluginsDir)
+	}
+	settings, err := os.ReadFile(filepath.Join(cfgDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	if !strings.Contains(string(settings), `"superpowers@claude-plugins-official":true`) {
+		t.Errorf("settings.json missing enabledPlugins entry; got:\n%s", settings)
+	}
+}
+
+func TestRunnerRemovesConfigDirOnFailure(t *testing.T) {
+	bin := writeFakeClaude(t, "", 2, 0) // non-zero exit, but env is written first
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	var cfgDir string
+	for _, line := range strings.Split(string(env), "\n") {
+		if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+			cfgDir = v
+		}
+	}
+	if cfgDir == "" {
+		t.Fatal("CLAUDE_CONFIG_DIR not captured")
+	}
+	if _, err := os.Stat(cfgDir); !os.IsNotExist(err) {
+		t.Errorf("config dir %q must be removed even after a failed run (stat err=%v)", cfgDir, err)
+	}
+}
+
+// An inherited CLAUDE_CONFIG_DIR in the daemon's own environment must never reach
+// the claude child: the per-run isolated dir is authoritative. This guards the
+// curatedEnv drop against a future reorder of the prefix check.
+func TestRunnerDropsInheritedConfigDir(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/attacker/config")
+	bin := writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop()}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	env, err := os.ReadFile(bin + ".env")
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if strings.Contains(string(env), "/attacker/config") {
+		t.Errorf("inherited CLAUDE_CONFIG_DIR must be dropped, not passed to the child:\n%s", env)
+	}
+	if !strings.Contains(string(env), "CLAUDE_CONFIG_DIR=") {
+		t.Errorf("the per-run CLAUDE_CONFIG_DIR must still be set in the child env:\n%s", env)
+	}
+}
+
+// Parallel safety is the point of the per-run config dir: concurrent runs must
+// each get their own CLAUDE_CONFIG_DIR (spec §12). Run under -race.
+func TestRunnerConfigDirsDistinctUnderConcurrency(t *testing.T) {
+	const n = 8
+	// Pre-create the fake bins on the test goroutine (writeFakeClaude calls
+	// t.TempDir/t.Fatalf, which must not run in a spawned goroutine).
+	bins := make([]string, n)
+	for i := range bins {
+		bins[i] = writeFakeClaude(t, envelope("ok", false, "success"), 0, 0)
+	}
+	dirs := make([]string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := &Runner{bin: bins[i], log: zap.NewNop()}
+			if _, err := r.Run(context.Background(), RunSpec{Prompt: "x", Timeout: 5 * time.Second}); err != nil {
+				t.Errorf("run %d: %v", i, err)
+				return
+			}
+			env, err := os.ReadFile(bins[i] + ".env")
+			if err != nil {
+				t.Errorf("run %d read env: %v", i, err)
+				return
+			}
+			for _, line := range strings.Split(string(env), "\n") {
+				if v, ok := strings.CutPrefix(line, "CLAUDE_CONFIG_DIR="); ok {
+					dirs[i] = v
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	seen := make(map[string]bool, n)
+	for i, d := range dirs {
+		if d == "" {
+			t.Fatalf("run %d had no CLAUDE_CONFIG_DIR", i)
+		}
+		if seen[d] {
+			t.Errorf("config dir %q reused across concurrent runs", d)
+		}
+		seen[d] = true
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("config dir %q not removed after concurrent run", d)
+		}
 	}
 }
 

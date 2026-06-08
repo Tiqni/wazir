@@ -79,24 +79,28 @@ func (f *GitHubForge) worktreePath(repo, branch string) (string, error) {
 	return filepath.Join(f.worktreeRoot, owner+"-"+name+"-"+slug), nil
 }
 
-// EnsureClone makes the clone present + current (clone if absent, else fetch).
-func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) error {
+// EnsureClone makes the clone present + current (clone if absent, else fetch) and returns its path.
+func (f *GitHubForge) EnsureClone(ctx context.Context, repo string) (string, error) {
 	clone, err := f.clonePath(repo)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if _, statErr := os.Stat(filepath.Join(clone, ".git")); statErr == nil {
 		if err := f.resetOrigin(ctx, clone, repo); err != nil {
-			return err
+			return "", err
 		}
-		_, err := f.git.run(ctx, clone, true, "fetch", "origin", "--prune")
-		return err
+		if _, err := f.git.run(ctx, clone, true, "fetch", "origin", "--prune"); err != nil {
+			return "", err
+		}
+		return clone, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(clone), 0o755); err != nil {
-		return fmt.Errorf("mkdir clone parent: %w", err)
+		return "", fmt.Errorf("mkdir clone parent: %w", err)
 	}
-	_, err = f.git.run(ctx, "", true, "clone", f.remoteURL(repo), clone)
-	return err
+	if _, err := f.git.run(ctx, "", true, "clone", f.remoteURL(repo), clone); err != nil {
+		return "", err
+	}
+	return clone, nil
 }
 
 // CreateWorktree adds a worktree on `branch`, reset to origin/<base>, and returns its path.

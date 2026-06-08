@@ -10,6 +10,12 @@ receiver + idempotency + queue + in-memory board + orchestrator with the `Brain`
 progress** on branch `m4-worktree-plan-execute`: the live forge git operations (clone/worktree/push)
 and real `claude` plan/execute turns inside a per-card worktree, producing a real PR. See
 `docs/superpowers/specs/2026-06-07-wazir-m4-design.md` and `docs/superpowers/plans/2026-06-07-wazir-m4.md`.
+**M5 slice 1 (execution isolation) is in progress** on branch `m5-execution-isolation`: per-run
+`CLAUDE_CONFIG_DIR` (suppressing global `~/.claude/CLAUDE.md` and other plugins), `--plugin-dir` for
+plan/execute turns, long-lived-token auth (`CLAUDE_CODE_OAUTH_TOKEN`), and a repo-aware brainstorm
+(cwd = the card's repo clone). See
+`docs/superpowers/specs/2026-06-07-wazir-m5-execution-isolation-design.md` and
+`docs/superpowers/plans/2026-06-07-wazir-m5-execution-isolation.md`.
 
 Two source-of-truth documents, both worth reading before non-trivial work:
 - **`docs/wazir-init-plan.md`** — the original PRD + technical design + phased plan. Section numbers
@@ -119,6 +125,10 @@ These constraints are the whole point of the design. Violating them defeats it.
 With no file present, config comes from env + struct `default:` tags (via `fig.IgnoreFile()`). Secrets
 (PAT, webhook secret) come from env, not the committed file. Entry point: `config.Load(path)`;
 `--config` sets the path. `wazir.example.yaml` is the template; `/wazir.yaml` is gitignored.
+The `claude` section also carries `plugins_dir` (default `~/.claude/plugins`), `plugin_id` (default
+`superpowers@claude-plugins-official`), and `setting_sources` (default `user`) — env
+`WAZIR_CLAUDE_PLUGINS_DIR` / `WAZIR_CLAUDE_PLUGIN_ID` / `WAZIR_CLAUDE_SETTING_SOURCES`. The daemon
+authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in the environment (not the committed file).
 
 ## Testing strategy
 

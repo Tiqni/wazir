@@ -49,8 +49,17 @@ forge:
   worktree_root: ~/.wazir/worktrees
   base_branch: main
 
-# (M4 additions to the claude section — merge into the existing claude block.)
+# (M4/M5 additions to the claude section — merge into the existing claude block.)
 # claude:
 #   plan_timeout: 10m
 #   execute_timeout: 30m   # execute needs longer than brainstorm
-#   execute_allowed_tools: "Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
+#   execute_allowed_tools: "Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
+#   plugins_dir: ~/.claude/plugins                   # M5: registry symlinked into each plan/execute config dir
+#   plugin_id: superpowers@claude-plugins-official   # M5: plugin enabled in the seeded settings.json
+#   setting_sources: user                            # M5: --setting-sources (spike-pinned; blocks repo settings widening tools)
+#
+# M5 isolation: each claude turn runs under a fresh per-run CLAUDE_CONFIG_DIR (no
+# global ~/.claude/CLAUDE.md, no other plugins). Brainstorm runs bare (read-only,
+# repo cwd); plan/execute seed the dir with a symlink to plugins_dir + a settings.json
+# enabling plugin_id, so the Superpowers skills load (invoked via the Skill tool).
+# Authenticate the daemon with a long-lived token, not Keychain:  export CLAUDE_CODE_OAUTH_TOKEN=...

@@ -13,8 +13,8 @@ var ErrNotImplemented = errors.New("forge: not implemented")
 // worktree roots) so the provider-free core never holds local paths.
 type CodeForge interface {
 	// EnsureClone makes the local clone for repo present and current
-	// (clone if absent, else fetch). Idempotent.
-	EnsureClone(ctx context.Context, repo string) error
+	// (clone if absent, else fetch) and returns its absolute path. Idempotent.
+	EnsureClone(ctx context.Context, repo string) (clonePath string, err error)
 	// CreateWorktree adds a worktree on a fresh branch (reset to base) and
 	// returns its absolute path.
 	CreateWorktree(ctx context.Context, repo, branch string) (path string, err error)

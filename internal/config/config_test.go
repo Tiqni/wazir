@@ -212,3 +212,35 @@ func TestForgeEnvOverrides(t *testing.T) {
 		t.Errorf("ExecuteTimeout = %s, want 12m", c.Claude.ExecuteTimeout)
 	}
 }
+
+func TestClaudeIsolationConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.HasSuffix(c.Claude.PluginsDir, ".claude/plugins") || strings.HasPrefix(c.Claude.PluginsDir, "~") {
+		t.Errorf("plugins_dir default = %q, want an expanded path ending in .claude/plugins", c.Claude.PluginsDir)
+	}
+	if c.Claude.PluginID != "superpowers@claude-plugins-official" {
+		t.Errorf("plugin_id default = %q", c.Claude.PluginID)
+	}
+	if c.Claude.SettingSources != "user" {
+		t.Errorf("setting_sources default = %q, want user", c.Claude.SettingSources)
+	}
+
+	t.Setenv("WAZIR_CLAUDE_PLUGINS_DIR", "/opt/plugins")
+	t.Setenv("WAZIR_CLAUDE_PLUGIN_ID", "custom@mp")
+	t.Setenv("WAZIR_CLAUDE_SETTING_SOURCES", "user,local")
+	c2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c2.Claude.PluginsDir != "/opt/plugins" || c2.Claude.PluginID != "custom@mp" || c2.Claude.SettingSources != "user,local" {
+		t.Errorf("env overrides not applied: %+v", c2.Claude)
+	}
+}
