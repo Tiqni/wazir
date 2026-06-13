@@ -23,6 +23,10 @@ coverage.out
 /worktrees/
 /clones/
 
+# Secrets — GitHub App private keys / certs (never commit)
+*.pem
+*.key
+
 # macOS
 .DS_Store
 .AppleDouble
