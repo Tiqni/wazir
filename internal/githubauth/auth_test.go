@@ -1,44 +1,78 @@
 package githubauth
 
 import (
+	"bytes"
 	"context"
-	"errors"
-	"net/http"
-	"net/http/httptest"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
 )
 
-func TestPATClientSetsBearerHeader(t *testing.T) {
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+// testKeyPEM generates a throwaway RSA private key in PKCS#1 PEM form.
+func testKeyPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	der := x509.MarshalPKCS1PrivateKey(key)
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
+}
 
-	c, err := HTTPClient(context.Background(), config.Config{
-		GitHub: config.GitHubConfig{Auth: "pat", PAT: "tok123"},
-	})
+func appConfig(privateKey string) config.Config {
+	return config.Config{GitHub: config.GitHubConfig{AppID: 1, InstallationID: 2, PrivateKey: privateKey}}
+}
+
+func TestNewBuildsAppAuth(t *testing.T) {
+	a, err := New(context.Background(), appConfig(string(testKeyPEM(t))))
 	if err != nil {
-		t.Fatalf("HTTPClient: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	resp, err := c.Get(srv.URL)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
+	if a.HTTPClient == nil {
+		t.Error("HTTPClient must be non-nil")
 	}
-	resp.Body.Close()
-	if gotAuth != "Bearer tok123" {
-		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer tok123")
+	if a.GitToken == nil {
+		t.Error("GitToken must be non-nil")
 	}
 }
 
-func TestAppNotWiredYet(t *testing.T) {
-	_, err := HTTPClient(context.Background(), config.Config{
-		GitHub: config.GitHubConfig{Auth: "app", AppID: 1, PrivateKey: "x"},
-	})
-	if !errors.Is(err, ErrAppAuthNotWired) {
-		t.Fatalf("want ErrAppAuthNotWired, got %v", err)
+func TestNewRejectsBadKey(t *testing.T) {
+	if _, err := New(context.Background(), appConfig("not-a-pem-key")); err == nil {
+		t.Fatal("expected an error for an unparseable private key")
+	}
+}
+
+func TestLoadPrivateKeyAutoDetect(t *testing.T) {
+	pemBytes := testKeyPEM(t)
+	path := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"file path":  path,
+		"raw PEM":    string(pemBytes),
+		"base64 PEM": base64.StdEncoding.EncodeToString(pemBytes),
+	}
+	for name, v := range cases {
+		got, err := loadPrivateKey(v)
+		if err != nil {
+			t.Fatalf("%s: loadPrivateKey: %v", name, err)
+		}
+		if !bytes.Equal(got, pemBytes) {
+			t.Errorf("%s: got %d bytes, want the original PEM", name, len(got))
+		}
+	}
+}
+
+func TestLoadPrivateKeyEmpty(t *testing.T) {
+	if _, err := loadPrivateKey(""); err == nil {
+		t.Fatal("expected an error for an empty private key")
 	}
 }
