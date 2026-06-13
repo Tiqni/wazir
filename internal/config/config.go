@@ -12,8 +12,8 @@ import (
 	"github.com/kkyr/fig"
 )
 
-// envPrefix is prepended to every environment variable fig reads, e.g. the
-// e.g. the github.app_id field is overridden by WAZIR_GITHUB_APP_ID.
+// envPrefix is prepended to every environment variable fig reads;
+// e.g. github.app_id is overridden by WAZIR_GITHUB_APP_ID.
 const envPrefix = "WAZIR"
 
 // Config is the full configuration surface (init-plan §11).

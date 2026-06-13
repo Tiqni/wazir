@@ -84,7 +84,8 @@ func TestLoadFromFile(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	clearGitHubEnv(t) // file's owner_type: org must win over any ambient WAZIR_GITHUB_OWNER_TYPE
+	t.Chdir(t.TempDir()) // isolate from any ambient ./wazir.yaml
+	clearGitHubEnv(t)     // file's owner_type: org must win over any ambient WAZIR_GITHUB_OWNER_TYPE
 	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "envkey")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "99")
 
@@ -130,8 +131,12 @@ func TestLoadRejectsMissingAppFields(t *testing.T) {
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
 	// no app_id/installation_id/private_key
-	if _, err := Load(""); err == nil {
+	_, err := Load("")
+	if err == nil {
 		t.Fatal("expected error when the App auth fields are missing")
+	}
+	if !strings.Contains(err.Error(), "WAZIR_GITHUB_APP_ID") {
+		t.Errorf("error should name the missing env vars, got: %v", err)
 	}
 }
 
