@@ -3,20 +3,21 @@
 # Any field can be overridden by an environment variable named
 # WAZIR_<SECTION>_<FIELD>, e.g. WAZIR_PROJECT_NUMBER or WAZIR_GITHUB_OWNER_TYPE.
 # Secrets are best supplied via env rather than committed to a file:
-#   export WAZIR_GITHUB_PAT=...             # overrides github.pat
+#   export WAZIR_GITHUB_APP_ID=...
+#   export WAZIR_GITHUB_INSTALLATION_ID=...
+#   export WAZIR_GITHUB_PRIVATE_KEY=...     # .pem path OR PEM bytes (base64 ok)
 #   export WAZIR_GITHUB_WEBHOOK_SECRET=...  # overrides github.webhook_secret
 #
 # A config file is optional: with none present, Wazir reads everything from
 # the environment (plus the defaults shown below).
 
 github:
-  auth: pat # pat | app
-  owner_type: user # user | org
-  # pat: ""              # prefer WAZIR_GITHUB_PAT
+  # GitHub App is the only auth mode. Secrets come from env, not this file.
+  owner_type: org # must be org — an App can't access a user-owned Projects v2 board
   # webhook_secret: ""   # prefer WAZIR_GITHUB_WEBHOOK_SECRET (used by ParseEvent)
-  # app_id: 0            # for auth: app (wired in M1+)
-  # private_key: ""
-  # installation_id: 0
+  # app_id: 0            # prefer WAZIR_GITHUB_APP_ID
+  # installation_id: 0   # prefer WAZIR_GITHUB_INSTALLATION_ID
+  # private_key: ""      # prefer WAZIR_GITHUB_PRIVATE_KEY (.pem path OR PEM bytes; base64 ok)
 
 project:
   owner: your-login # the user/org login that owns the board
@@ -41,8 +42,9 @@ claude:
   max_brainstorm_turns: 8 # cap on the clarifying-question loop
 
 # Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
-# each in-flight card gets its own worktree. Auth reuses github.pat — no git
-# credential lives in any worktree's .git/config.
+# each in-flight card gets its own worktree. Auth uses a fresh App installation
+# token per git network op (injected via http.extraHeader) — no git credential
+# lives in any worktree's .git/config.
 forge:
   git_bin: git
   clone_root: ~/.wazir/clones
