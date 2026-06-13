@@ -8,11 +8,21 @@ import (
 	"time"
 )
 
+// setAppEnv sets the GitHub App auth env so Load() passes validation. owner_type
+// defaults to org, so it is not set here.
+func setAppEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("WAZIR_GITHUB_APP_ID", "111")
+	t.Setenv("WAZIR_GITHUB_INSTALLATION_ID", "222")
+	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "/tmp/wazir-test-key.pem")
+}
+
 const sampleYAML = `
 github:
-  auth: pat
-  pat: filetoken
-  owner_type: user
+  app_id: 111
+  installation_id: 222
+  private_key: filekey
+  owner_type: org
 project:
   owner: octocat
   number: 7
@@ -40,7 +50,7 @@ func TestLoadFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.GitHub.Auth != "pat" || c.GitHub.PAT != "filetoken" {
+	if c.GitHub.AppID != 111 || c.GitHub.InstallationID != 222 || c.GitHub.PrivateKey != "filekey" {
 		t.Errorf("github = %+v", c.GitHub)
 	}
 	if c.Project.Owner != "octocat" || c.Project.Number != 7 || c.Project.BoardName != "MyBoard" {
@@ -55,15 +65,15 @@ func TestLoadFromFile(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	t.Setenv("WAZIR_GITHUB_PAT", "envtoken")
+	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "envkey")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "99")
 
 	c, err := Load(writeConfig(t, sampleYAML))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.GitHub.PAT != "envtoken" {
-		t.Errorf("env should override file pat, got %q", c.GitHub.PAT)
+	if c.GitHub.PrivateKey != "envkey" {
+		t.Errorf("env should override file private_key, got %q", c.GitHub.PrivateKey)
 	}
 	if c.Project.Number != 99 {
 		t.Errorf("env should override file number, got %d", c.Project.Number)
@@ -72,7 +82,7 @@ func TestEnvOverridesFile(t *testing.T) {
 
 func TestLoadEnvOnlyWithDefaults(t *testing.T) {
 	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
-	t.Setenv("WAZIR_GITHUB_PAT", "tok")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
 
@@ -80,11 +90,8 @@ func TestLoadEnvOnlyWithDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.GitHub.Auth != "pat" {
-		t.Errorf("auth default = %q, want pat", c.GitHub.Auth)
-	}
-	if c.GitHub.OwnerType != "user" {
-		t.Errorf("owner_type default = %q, want user", c.GitHub.OwnerType)
+	if c.GitHub.OwnerType != "org" {
+		t.Errorf("owner_type default = %q, want org", c.GitHub.OwnerType)
 	}
 	if c.Project.BoardName != "Wazir" {
 		t.Errorf("board_name default = %q, want Wazir", c.Project.BoardName)
@@ -97,12 +104,24 @@ func TestLoadEnvOnlyWithDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsPATAuthWithoutToken(t *testing.T) {
+func TestLoadRejectsMissingAppFields(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
-	// no WAZIR_GITHUB_PAT
+	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
+	// no app_id/installation_id/private_key
 	if _, err := Load(""); err == nil {
-		t.Fatal("expected error when auth=pat but pat empty")
+		t.Fatal("expected error when the App auth fields are missing")
+	}
+}
+
+func TestLoadRejectsUserOwnerType(t *testing.T) {
+	t.Chdir(t.TempDir())
+	setAppEnv(t)
+	t.Setenv("WAZIR_GITHUB_OWNER_TYPE", "user")
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected error: an App can't drive a user-owned board")
 	}
 }
 
@@ -114,7 +133,7 @@ func TestLoadExplicitMissingFileErrors(t *testing.T) {
 
 func TestClaudeDefaults(t *testing.T) {
 	t.Chdir(t.TempDir()) // isolate from any local wazir.yaml so defaults are exercised
-	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
 	c, err := Load("")
@@ -133,7 +152,7 @@ func TestClaudeDefaults(t *testing.T) {
 }
 
 func TestClaudeEnvOverrides(t *testing.T) {
-	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
 	t.Setenv("WAZIR_CLAUDE_BIN", "/usr/local/bin/claude")
@@ -157,7 +176,7 @@ func TestClaudeEnvOverrides(t *testing.T) {
 
 func TestForgeAndClaudeM4Defaults(t *testing.T) {
 	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
-	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
 	c, err := Load("")
@@ -192,7 +211,7 @@ func TestForgeAndClaudeM4Defaults(t *testing.T) {
 
 func TestForgeEnvOverrides(t *testing.T) {
 	t.Chdir(t.TempDir()) // ensure no ./wazir.yaml is discovered
-	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
 	t.Setenv("WAZIR_FORGE_GIT_BIN", "/usr/bin/git")
@@ -215,7 +234,7 @@ func TestForgeEnvOverrides(t *testing.T) {
 
 func TestClaudeIsolationConfig(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("WAZIR_GITHUB_PAT", "x")
+	setAppEnv(t)
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
 

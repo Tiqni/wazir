@@ -13,7 +13,7 @@ import (
 )
 
 // envPrefix is prepended to every environment variable fig reads, e.g. the
-// github.pat field is overridden by WAZIR_GITHUB_PAT.
+// e.g. the github.app_id field is overridden by WAZIR_GITHUB_APP_ID.
 const envPrefix = "WAZIR"
 
 // Config is the full configuration surface (init-plan §11).
@@ -50,16 +50,14 @@ type ForgeConfig struct {
 	BaseBranch   string `fig:"base_branch" default:"main"`                 // WAZIR_FORGE_BASE_BRANCH
 }
 
-// GitHubConfig holds auth + GitHub-side identity. Secrets (pat, webhook_secret,
-// private_key) are normally supplied via env, not the file.
+// GitHubConfig holds GitHub App auth + GitHub-side identity. Secrets
+// (webhook_secret, private_key) are normally supplied via env, not the file.
 type GitHubConfig struct {
-	Auth           string `fig:"auth" default:"pat"`        // pat | app
-	PAT            string `fig:"pat"`                       // WAZIR_GITHUB_PAT
-	OwnerType      string `fig:"owner_type" default:"user"` // user | org
-	WebhookSecret  string `fig:"webhook_secret"`            // WAZIR_GITHUB_WEBHOOK_SECRET
-	AppID          int64  `fig:"app_id"`
-	PrivateKey     string `fig:"private_key"`
-	InstallationID int64  `fig:"installation_id"`
+	OwnerType      string `fig:"owner_type" default:"org"` // must be org — an App can't drive a user-owned Projects v2 board
+	WebhookSecret  string `fig:"webhook_secret"`           // WAZIR_GITHUB_WEBHOOK_SECRET
+	AppID          int64  `fig:"app_id"`                   // WAZIR_GITHUB_APP_ID
+	InstallationID int64  `fig:"installation_id"`          // WAZIR_GITHUB_INSTALLATION_ID
+	PrivateKey     string `fig:"private_key"`              // WAZIR_GITHUB_PRIVATE_KEY — .pem path or PEM bytes (base64-aware)
 }
 
 // ProjectConfig identifies the Projects v2 board.
@@ -108,20 +106,13 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) validate() error {
-	switch c.GitHub.Auth {
-	case "pat":
-		if c.GitHub.PAT == "" {
-			return fmt.Errorf("github.auth=pat requires github.pat (set WAZIR_GITHUB_PAT)")
-		}
-	case "app":
-		if c.GitHub.AppID == 0 || c.GitHub.PrivateKey == "" {
-			return fmt.Errorf("github.auth=app requires github.app_id and github.private_key")
-		}
-	default:
-		return fmt.Errorf("github.auth must be pat or app, got %q", c.GitHub.Auth)
+	if c.GitHub.AppID == 0 || c.GitHub.InstallationID == 0 || c.GitHub.PrivateKey == "" {
+		return fmt.Errorf("github app auth requires github.app_id, github.installation_id, and github.private_key " +
+			"(set WAZIR_GITHUB_APP_ID / WAZIR_GITHUB_INSTALLATION_ID / WAZIR_GITHUB_PRIVATE_KEY)")
 	}
-	if c.GitHub.OwnerType != "user" && c.GitHub.OwnerType != "org" {
-		return fmt.Errorf("github.owner_type must be user or org, got %q", c.GitHub.OwnerType)
+	if c.GitHub.OwnerType != "org" {
+		return fmt.Errorf("github.owner_type must be org for GitHub App auth "+
+			"(a user-owned Projects v2 board is not accessible to an App), got %q", c.GitHub.OwnerType)
 	}
 	if c.Project.Owner == "" {
 		return fmt.Errorf("project.owner is required")
