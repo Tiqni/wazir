@@ -3,6 +3,7 @@ module github.com/EmadMokhtar/wazir
 go 1.25.0
 
 require (
+	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
 	github.com/google/go-github/v66 v66.0.0
 	github.com/kkyr/fig v0.5.0
 	github.com/shurcooL/githubv4 v0.0.0-20260209031235-2402fdf4a9ed
@@ -12,9 +13,7 @@ require (
 )
 
 require (
-	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-github/v88 v88.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
