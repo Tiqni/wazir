@@ -8,10 +8,28 @@ import (
 	"time"
 )
 
-// setAppEnv sets the GitHub App auth env so Load() passes validation. owner_type
-// defaults to org, so it is not set here.
+// clearGitHubEnv removes any ambient WAZIR_GITHUB_* vars for the duration of the
+// test (restoring them after), so a developer who exports real App credentials to
+// run the daemon doesn't clobber the file/default/absence values these tests assert.
+func clearGitHubEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"WAZIR_GITHUB_APP_ID", "WAZIR_GITHUB_INSTALLATION_ID", "WAZIR_GITHUB_PRIVATE_KEY",
+		"WAZIR_GITHUB_OWNER_TYPE", "WAZIR_GITHUB_WEBHOOK_SECRET",
+	} {
+		if v, ok := os.LookupEnv(k); ok {
+			os.Unsetenv(k)
+			t.Cleanup(func() { os.Setenv(k, v) })
+		}
+	}
+}
+
+// setAppEnv sets the GitHub App auth env so Load() passes validation, after
+// clearing any ambient WAZIR_GITHUB_* so the operator's real env can't interfere.
+// owner_type defaults to org, so it is not set here.
 func setAppEnv(t *testing.T) {
 	t.Helper()
+	clearGitHubEnv(t)
 	t.Setenv("WAZIR_GITHUB_APP_ID", "111")
 	t.Setenv("WAZIR_GITHUB_INSTALLATION_ID", "222")
 	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "/tmp/wazir-test-key.pem")
@@ -46,6 +64,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestLoadFromFile(t *testing.T) {
+	clearGitHubEnv(t) // file values must win over any ambient WAZIR_GITHUB_*
 	c, err := Load(writeConfig(t, sampleYAML))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -106,6 +125,7 @@ func TestLoadEnvOnlyWithDefaults(t *testing.T) {
 
 func TestLoadRejectsMissingAppFields(t *testing.T) {
 	t.Chdir(t.TempDir())
+	clearGitHubEnv(t) // the App fields must be genuinely absent, not supplied by the operator's shell
 	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
 	// no app_id/installation_id/private_key
