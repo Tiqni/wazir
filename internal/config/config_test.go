@@ -84,6 +84,7 @@ func TestLoadFromFile(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
+	clearGitHubEnv(t) // file's owner_type: org must win over any ambient WAZIR_GITHUB_OWNER_TYPE
 	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "envkey")
 	t.Setenv("WAZIR_PROJECT_NUMBER", "99")
 
