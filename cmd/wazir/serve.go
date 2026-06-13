@@ -48,9 +48,14 @@ func runServe(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
-	hc, err := githubauth.HTTPClient(ctx, cfg)
+	auth, err := githubauth.New(ctx, cfg)
 	if err != nil {
 		return err
+	}
+	// Fail loud at startup if the App credentials can't mint an installation
+	// token, rather than discovering it mid-turn (mirrors the plugin-dir resolve).
+	if _, err := auth.GitToken(ctx); err != nil {
+		return fmt.Errorf("mint installation token (check app_id/installation_id/private_key): %w", err)
 	}
 	st, err := store.OpenBbolt(cfg.Store.DBPath)
 	if err != nil {
@@ -58,7 +63,7 @@ func runServe(ctx context.Context, addr string) error {
 	}
 	defer st.Close()
 
-	b := boardgh.New(hc, cfg, st)
+	b := boardgh.New(auth.HTTPClient, cfg, st)
 	// Load the board's cached identity (project node id + option→phase map) before
 	// serving: ParseEvent drops projects_v2_item events whose project id != the
 	// configured board, and that id is empty until hydrated — so without this every
@@ -67,12 +72,12 @@ func runServe(ctx context.Context, addr string) error {
 	if err := b.Hydrate(ctx); err != nil {
 		return fmt.Errorf("hydrate board (run `wazir provision` or `wazir bootstrap` first): %w", err)
 	}
-	f := forgegh.New(github.NewClient(hc), forgegh.Options{
+	f := forgegh.New(github.NewClient(auth.HTTPClient), forgegh.Options{
 		GitBin:       cfg.Forge.GitBin,
 		CloneRoot:    cfg.Forge.CloneRoot,
 		WorktreeRoot: cfg.Forge.WorktreeRoot,
 		Base:         cfg.Forge.BaseBranch,
-		Token:        cfg.GitHub.PAT,
+		GitToken:     auth.GitToken,
 	})
 	// plan/execute seed each per-run config dir with a symlink to this plugin registry
 	// + a settings.json enabling the configured plugin, so the Superpowers skills load

@@ -10,12 +10,13 @@ import (
 	"strings"
 )
 
-// gitRunner execs `git` with a curated env. The PAT is injected as an
+// gitRunner execs `git` with a curated env. The token is injected as an
 // http.extraHeader via GIT_CONFIG_* (not argv, so it never shows in `ps`, and
-// not .git/config, so it never persists). Auth is added only for network ops.
+// not .git/config, so it never persists). Auth is added only for network ops,
+// and the token is resolved per op so a refreshed installation token is used.
 type gitRunner struct {
 	bin   string
-	token string
+	token func(ctx context.Context) (string, error)
 }
 
 // authConfigEnv returns the GIT_CONFIG_* env that injects an Authorization
@@ -32,29 +33,34 @@ func authConfigEnv(token string) []string {
 	}
 }
 
-// curatedGitEnv is a minimal, secret-free env for git children: PATH/HOME for
-// resolution, GIT_TERMINAL_PROMPT=0 so a missing credential fails instead of
-// hanging, plus the auth header when this is a network op. WAZIR_* never leaks.
-func curatedGitEnv(auth bool, token string) []string {
-	env := []string{
+// curatedGitEnv is a minimal, secret-free base env for git children: PATH/HOME
+// for resolution and GIT_TERMINAL_PROMPT=0 so a missing credential fails instead
+// of hanging. The auth header (when needed) is appended by run(). WAZIR_* never leaks.
+func curatedGitEnv() []string {
+	return []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"GIT_TERMINAL_PROMPT=0",
 	}
-	if auth {
-		env = append(env, authConfigEnv(token)...)
-	}
-	return env
 }
 
 // run execs `git args...`. dir sets cmd.Dir when non-empty. auth toggles the
-// credential header. It fails loudly with stderr on a non-zero exit.
+// credential header (a fresh token is resolved from the token source for the op).
+// It fails loudly with stderr on a non-zero exit.
 func (g gitRunner) run(ctx context.Context, dir string, auth bool, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = curatedGitEnv(auth, g.token)
+	env := curatedGitEnv()
+	if auth && g.token != nil {
+		tok, err := g.token(ctx)
+		if err != nil {
+			return "", fmt.Errorf("get git token: %w", err)
+		}
+		env = append(env, authConfigEnv(tok)...)
+	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

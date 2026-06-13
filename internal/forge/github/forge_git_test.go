@@ -38,7 +38,7 @@ func seedBareOrigin(t *testing.T) string {
 func newTestForge(t *testing.T, origin string) *GitHubForge {
 	t.Helper()
 	return New(nil, Options{
-		GitBin: "git", Base: "main", Token: "",
+		GitBin: "git", Base: "main",
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 		RemoteURL: func(repo string) string { return origin },
 	})
@@ -103,7 +103,8 @@ func TestForgeCloneDoesNotPersistToken(t *testing.T) {
 	origin := seedBareOrigin(t)
 	const secret = "super-secret-pat-DO-NOT-LEAK"
 	f := New(nil, Options{
-		GitBin: "git", Base: "main", Token: secret,
+		GitBin: "git", Base: "main",
+		GitToken:  func(context.Context) (string, error) { return secret, nil },
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 		RemoteURL: func(repo string) string { return origin },
 	})
