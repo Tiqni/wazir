@@ -26,7 +26,7 @@ import (
 //	go test -tags integration ./internal/forge/github/ -run TestIntegrationForgeRoundTrip -v
 func TestIntegrationForgeRoundTrip(t *testing.T) {
 	repo := os.Getenv("WAZIR_IT_REPO")
-	if os.Getenv("WAZIR_GITHUB_APP_ID") == "" || repo == "" {
+	if os.Getenv("WAZIR_GITHUB_APP_ID") == "" || os.Getenv("WAZIR_GITHUB_INSTALLATION_ID") == "" || repo == "" {
 		t.Skip("set WAZIR_GITHUB_APP_ID/INSTALLATION_ID/PRIVATE_KEY and WAZIR_IT_REPO to run")
 	}
 	ctx := context.Background()

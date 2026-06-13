@@ -35,11 +35,14 @@ func TestRunResolvesTokenForNetworkOps(t *testing.T) {
 	}
 	called := 0
 	g := gitRunner{bin: "git", token: func(context.Context) (string, error) { called++; return "tok", nil }}
-	if _, err := g.run(context.Background(), "", true, "--version"); err != nil {
-		t.Fatalf("run: %v", err)
+	for i := range 2 {
+		if _, err := g.run(context.Background(), "", true, "--version"); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
 	}
-	if called != 1 {
-		t.Errorf("token source called %d times, want 1", called)
+	// Resolved per network op (not cached in the runner): two ops → two calls.
+	if called != 2 {
+		t.Errorf("token source called %d times across 2 network ops, want 2", called)
 	}
 }
 
