@@ -61,13 +61,15 @@ func TestLoadPrivateKeyAutoDetect(t *testing.T) {
 		"base64 PEM": base64.StdEncoding.EncodeToString(pemBytes),
 	}
 	for name, v := range cases {
-		got, err := loadPrivateKey(v)
-		if err != nil {
-			t.Fatalf("%s: loadPrivateKey: %v", name, err)
-		}
-		if !bytes.Equal(got, pemBytes) {
-			t.Errorf("%s: got %d bytes, want the original PEM", name, len(got))
-		}
+		t.Run(name, func(t *testing.T) {
+			got, err := loadPrivateKey(v)
+			if err != nil {
+				t.Fatalf("loadPrivateKey: %v", err)
+			}
+			if !bytes.Equal(got, pemBytes) {
+				t.Errorf("got %d bytes, want the original PEM", len(got))
+			}
+		})
 	}
 }
 
