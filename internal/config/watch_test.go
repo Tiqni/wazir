@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+// clearWazirEnv unsets ambient WAZIR_* vars for the test so file/default values
+// (e.g. project.number=0) aren't overridden by the developer's running-daemon env.
+func clearWazirEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"WAZIR_PROJECT_NUMBER", "WAZIR_PROJECT_OWNER", "WAZIR_GITHUB_OWNER_TYPE",
+		"WAZIR_GITHUB_PAT", "WAZIR_GITHUB_APP_ID", "WAZIR_GITHUB_INSTALLATION_ID",
+		"WAZIR_GITHUB_PRIVATE_KEY", "WAZIR_GITHUB_WEBHOOK_SECRET",
+	} {
+		if v, ok := os.LookupEnv(k); ok {
+			os.Unsetenv(k)
+			t.Cleanup(func() { os.Setenv(k, v) })
+		}
+	}
+}
+
 func TestResolvePath(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "wazir.yaml")
@@ -28,6 +44,7 @@ func TestResolvePath(t *testing.T) {
 }
 
 func TestWatchReloadsOnChangeAndRejectsInvalid(t *testing.T) {
+	clearWazirEnv(t) // file values (incl. project.number=0) must win over ambient WAZIR_*
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wazir.yaml")
 	const valid = "github:\n  auth: pat\n  pat: tok\nproject:\n  owner: octocat\n  number: 1\n"
@@ -39,6 +56,7 @@ func TestWatchReloadsOnChangeAndRejectsInvalid(t *testing.T) {
 	reloaded := make(chan Config, 1)
 	errs := make(chan error, 1)
 	go Watch(ctx, path, func(c Config) { reloaded <- c }, func(e error) { errs <- e })
+	time.Sleep(300 * time.Millisecond) // let the watcher register (w.Add) before the first write
 
 	// Valid edit → onReload with the new value.
 	if err := os.WriteFile(path, []byte(valid+"repos:\n  - octocat/added\n"), 0o644); err != nil {
