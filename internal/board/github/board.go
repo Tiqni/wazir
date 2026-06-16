@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/go-github/v66/github"
 
@@ -22,6 +24,13 @@ var ErrNotProvisioned = errors.New("board/github: board not provisioned")
 // hold cards. Move the cards or re-run with Force.
 var ErrColumnsOccupied = errors.New("board/github: refusing to delete Status columns that still hold cards")
 
+// boardReloadable is the hot-reloadable subset of the board config.
+type boardReloadable struct {
+	repos         []string
+	botLogin      string
+	webhookSecret string
+}
+
 // GitHubBoard implements board.Board against GitHub Projects v2.
 type GitHubBoard struct {
 	api   projectsAPI
@@ -32,12 +41,23 @@ type GitHubBoard struct {
 	ownerType     string
 	projectNumber int
 	boardName     string
-	botLogin      string
-	webhookSecret string
 	projectNodeID string
-	repos         []string // allow-list ("owner/name")
+	reloadable    atomic.Pointer[boardReloadable] // repos/bot_login/webhook_secret — hot-reloadable
 
 	cached *store.BoardRecord // lazily loaded board identity
+}
+
+// snap returns the current reloadable settings, never nil.
+func (b *GitHubBoard) snap() *boardReloadable {
+	if r := b.reloadable.Load(); r != nil {
+		return r
+	}
+	return &boardReloadable{}
+}
+
+// Reload swaps the hot-reloadable subset (allow-list, bot login, webhook secret).
+func (b *GitHubBoard) Reload(repos []string, botLogin, webhookSecret string) {
+	b.reloadable.Store(&boardReloadable{repos: slices.Clone(repos), botLogin: botLogin, webhookSecret: webhookSecret})
 }
 
 // EnsureProvisioned creates (if spec.Create) and/or reconciles the board's
@@ -186,14 +206,15 @@ func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef,
 	// moved accounts); rather than reject forever on the stale value, fall through
 	// to a fresh node lookup and refresh the cache below. resolveCard is thus the
 	// single, self-healing allow-list gate.
-	if ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
+	rl := b.snap() // one snapshot for this resolve op
+	if ok && rec.Repo != "" && b.repoAllowed(rl, rec.Repo) {
 		return issueRef{Repo: rec.Repo, Number: rec.IssueNumber}, nil
 	}
 	ref, err := b.api.ResolveIssue(ctx, cardID)
 	if err != nil {
 		return issueRef{}, fmt.Errorf("resolve issue %s: %w", cardID, err)
 	}
-	if !b.repoAllowed(ref.Repo) {
+	if !b.repoAllowed(rl, ref.Repo) {
 		return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, ref.Repo)
 	}
 	// Merge into any existing record so a previously-cached ProjectItemID
@@ -324,7 +345,7 @@ func (b *GitHubBoard) GetCard(ctx context.Context, cardID string) (board.Card, e
 		card.Comments = append(card.Comments, board.Comment{
 			ID:      fmt.Sprintf("%d", c.GetID()),
 			Author:  author,
-			IsBot:   author == b.botLogin || strings.Contains(body, botMarker),
+			IsBot:   author == b.snap().botLogin || strings.Contains(body, botMarker),
 			Body:    body,
 			Created: c.GetCreatedAt().Time,
 		})

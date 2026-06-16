@@ -18,11 +18,14 @@ func headerGet(h map[string]string, key string) string {
 	return ""
 }
 
-func (b *GitHubBoard) repoAllowed(full string) bool {
-	if len(b.repos) == 0 {
+// repoAllowed takes the caller's reloadable snapshot so one logical operation
+// (a ParseEvent call, a resolveCard call) uses a single consistent snapshot
+// rather than re-loading the atomic pointer per check.
+func (b *GitHubBoard) repoAllowed(rl *boardReloadable, full string) bool {
+	if len(rl.repos) == 0 {
 		return true // no allow-list configured = allow all
 	}
-	for _, r := range b.repos {
+	for _, r := range rl.repos {
 		if r == full {
 			return true
 		}
@@ -33,7 +36,8 @@ func (b *GitHubBoard) repoAllowed(full string) bool {
 // ParseEvent validates and normalizes a raw GitHub webhook into a domain Event.
 func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (board.Event, error) {
 	sig := headerGet(headers, "X-Hub-Signature-256")
-	if err := github.ValidateSignature(sig, payload, []byte(b.webhookSecret)); err != nil {
+	rl := b.snap()
+	if err := github.ValidateSignature(sig, payload, []byte(rl.webhookSecret)); err != nil {
 		return board.Event{}, fmt.Errorf("validate signature: %w", err)
 	}
 	eventType := headerGet(headers, "X-GitHub-Event")
@@ -47,7 +51,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 	switch e := raw.(type) {
 	case *github.IssuesEvent:
 		repo := e.GetRepo().GetFullName()
-		if !b.repoAllowed(repo) {
+		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		ev := board.Event{
@@ -64,7 +68,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 
 	case *github.IssueCommentEvent:
 		repo := e.GetRepo().GetFullName()
-		if !b.repoAllowed(repo) {
+		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		if e.GetAction() != "created" {
@@ -80,7 +84,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 			Comment: &board.Comment{
 				ID:      fmt.Sprintf("%d", e.GetComment().GetID()),
 				Author:  author,
-				IsBot:   author == b.botLogin || strings.Contains(body, botMarker),
+				IsBot:   author == rl.botLogin || strings.Contains(body, botMarker),
 				Body:    body,
 				Created: e.GetComment().GetCreatedAt().Time,
 			},
@@ -90,7 +94,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		// Loop prevention: the bot's own MoveTo mutations emit projects_v2_item
 		// events. Drop them so a move never re-triggers the worker. Requires
 		// bot_login to be configured (guarded so an empty login never matches).
-		if b.botLogin != "" && e.GetSender().GetLogin() == b.botLogin {
+		if rl.botLogin != "" && e.GetSender().GetLogin() == rl.botLogin {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		item := e.GetProjectV2Item()
@@ -106,7 +110,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		// here. The authoritative, self-refreshing allow-list check happens in
 		// resolveCard when the worker looks the card up.
 		if b.store != nil {
-			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
+			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" && b.repoAllowed(rl, rec.Repo) {
 				ev.Repo = rec.Repo
 			}
 		}

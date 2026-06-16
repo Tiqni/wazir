@@ -15,7 +15,8 @@ func TestResolveCardRejectsForeignRepo(t *testing.T) {
 	st := store.NewMemory()
 	st.PutCard("ISSUE9", store.CardRecord{Repo: "octocat/forbidden", IssueNumber: 3})
 	api := &fakeAPI{resolveRepo: "octocat/forbidden", resolveNumber: 3} // re-resolve still foreign
-	b := &GitHubBoard{api: api, store: st, repos: []string{"octocat/allowed"}}
+	b := &GitHubBoard{api: api, store: st}
+	b.Reload([]string{"octocat/allowed"}, "", "")
 
 	if _, err := b.resolveCard(context.Background(), "ISSUE9"); !errors.Is(err, ErrRepoNotAllowed) {
 		t.Fatalf("want ErrRepoNotAllowed, got %v", err)
@@ -31,7 +32,8 @@ func TestResolveCardReResolvesStaleCachedRepo(t *testing.T) {
 	// Cached under the old owner (pre-transfer), now outside the allow-list.
 	st.PutCard("ISSUE9", store.CardRecord{Repo: "old-owner/repo", IssueNumber: 3, ProjectItemID: "PVTI_1"})
 	api := &fakeAPI{resolveRepo: "new-org/repo", resolveNumber: 3} // transferred → now allowed
-	b := &GitHubBoard{api: api, store: st, repos: []string{"new-org/repo"}}
+	b := &GitHubBoard{api: api, store: st}
+	b.Reload([]string{"new-org/repo"}, "", "")
 
 	ref, err := b.resolveCard(context.Background(), "ISSUE9")
 	if err != nil {
@@ -56,7 +58,7 @@ func TestResolveCardReResolvesStaleCachedRepo(t *testing.T) {
 // Positive bot-detection case: a comment authored by BOT_LOGIN is flagged IsBot.
 func TestParseIssueCommentDetectsBotByLogin(t *testing.T) {
 	b := newParser()
-	b.botLogin = "alice" // matches the fixture's comment author
+	b.Reload([]string{"octocat/hello"}, "alice", "shh") // matches the fixture's comment author
 	payload := loadFixture(t, "issue_comment.json")
 	h := headersFor("issue_comment", "d6", sign([]byte("shh"), payload))
 
