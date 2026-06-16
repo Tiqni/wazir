@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
+	"github.com/EmadMokhtar/wazir/internal/store"
 )
 
 func sign(secret, payload []byte) string {
@@ -140,5 +141,48 @@ func TestParseProjectsV2ItemKeepsHumanMove(t *testing.T) {
 	}
 	if ev.Kind != board.EventPhaseChanged || ev.CardID != "ISSUE_NODE_1" {
 		t.Errorf("event = %+v, want PhaseChanged for a human move", ev)
+	}
+}
+
+// A projects_v2_item move must NOT be dropped just because the cached repo looks
+// disallowed: a repo rename/transfer makes the cache stale, and the payload
+// carries no repo to re-check here. The event flows through (repo left empty) so
+// the worker's self-refreshing resolveCard is the authoritative allow-list gate.
+func TestParseProjectsV2ItemDoesNotDropOnStaleCachedRepo(t *testing.T) {
+	b := newParser()
+	st := store.NewMemory()
+	st.PutCard("ISSUE_NODE_1", store.CardRecord{Repo: "old-owner/hello", IssueNumber: 1})
+	b.store = st
+	payload := loadFixture(t, "projects_v2_item.json") // sender = "alice" (human), project = PROJECT_NODE_1
+	h := headersFor("projects_v2_item", "d11", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventPhaseChanged {
+		t.Errorf("a stale cached repo must not drop the move; got %v, want PhaseChanged", ev.Kind)
+	}
+	if ev.Repo != "" {
+		t.Errorf("ev.Repo = %q, want empty (a disallowed cached repo must not be trusted)", ev.Repo)
+	}
+}
+
+// When the cached repo is still allowed, parse_event keeps populating ev.Repo as
+// a routing hint (the optimization stays intact).
+func TestParseProjectsV2ItemPopulatesRepoFromAllowedCache(t *testing.T) {
+	b := newParser()
+	st := store.NewMemory()
+	st.PutCard("ISSUE_NODE_1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 1})
+	b.store = st
+	payload := loadFixture(t, "projects_v2_item.json")
+	h := headersFor("projects_v2_item", "d12", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventPhaseChanged || ev.Repo != "octocat/hello" {
+		t.Errorf("allowed cached repo should populate ev.Repo; got kind=%v repo=%q", ev.Kind, ev.Repo)
 	}
 }
