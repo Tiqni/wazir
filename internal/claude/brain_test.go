@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -280,4 +281,38 @@ func TestSplitToolsTrimsAndDropsEmpties(t *testing.T) {
 	if splitTools("") != nil || splitTools(" , ") != nil {
 		t.Errorf("empty/whitespace-only input must yield nil, got %#v / %#v", splitTools(""), splitTools(" , "))
 	}
+}
+
+func TestBrainReloadSwapsModel(t *testing.T) {
+	planJSON := "```json\n{\"phase\":\"plan\",\"status\":\"plan_ready\",\"plan_path\":\"p.md\",\"summary\":\"s\",\"error\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(planJSON, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, Model: "model-a", PlanTimeout: 5 * time.Second}, zap.NewNop())
+
+	if _, err := br.Plan(context.Background(), orchestrator.PlanInput{Spec: "s", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if args, _ := os.ReadFile(bin + ".args"); !strings.Contains(string(args), "model-a") {
+		t.Fatalf("first turn argv missing model-a:\n%s", args)
+	}
+
+	br.Reload(config.ClaudeConfig{Bin: bin, Model: "model-b", PlanTimeout: 5 * time.Second})
+	if _, err := br.Plan(context.Background(), orchestrator.PlanInput{Spec: "s", WorktreePath: t.TempDir()}); err != nil {
+		t.Fatalf("Plan after reload: %v", err)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "model-b") {
+		t.Errorf("after Reload, argv must carry model-b; got:\n%s", args)
+	}
+}
+
+func TestBrainReloadRace(t *testing.T) {
+	br := New(config.ClaudeConfig{Bin: "true", Model: "a"}, zap.NewNop())
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); for j := 0; j < 1000; j++ { _ = br.settings.Load().model } }()
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); for j := 0; j < 1000; j++ { br.Reload(config.ClaudeConfig{Model: "b"}) } }()
+	wg.Wait()
 }
