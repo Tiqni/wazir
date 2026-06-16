@@ -131,6 +131,10 @@ func runServe(ctx context.Context, addr string) error {
 					b.Reload(newCfg.Repos, newCfg.BotLogin, newCfg.GitHub.WebhookSecret)
 					worker.SetMaxBrainstormTurns(newCfg.Claude.MaxBrainstormTurns)
 					logger.Info("config reloaded")
+					// Advance the restart-only baseline so a given change is warned about
+					// once, not on every subsequent reload. Safe: onReload runs only on the
+					// single Watch goroutine.
+					startCfg = newCfg
 				},
 				func(err error) { logger.Warn("config reload failed; keeping current config", zap.Error(err)) },
 			)
