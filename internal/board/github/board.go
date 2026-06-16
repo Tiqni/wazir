@@ -181,10 +181,12 @@ func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef,
 	if err != nil {
 		return issueRef{}, err
 	}
-	if ok && rec.Repo != "" {
-		if !b.repoAllowed(rec.Repo) {
-			return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, rec.Repo)
-		}
+	// Fast path: trust the cached repo only while it is still in the allow-list.
+	// A repo rename/transfer can leave the cached owner/name stale (the issue
+	// moved accounts); rather than reject forever on the stale value, fall through
+	// to a fresh node lookup and refresh the cache below. resolveCard is thus the
+	// single, self-healing allow-list gate.
+	if ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
 		return issueRef{Repo: rec.Repo, Number: rec.IssueNumber}, nil
 	}
 	ref, err := b.api.ResolveIssue(ctx, cardID)
@@ -195,8 +197,9 @@ func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef,
 		return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, ref.Repo)
 	}
 	// Merge into any existing record so a previously-cached ProjectItemID
-	// (e.g. set by MoveTo) is preserved. Caching is best-effort: resolution
-	// already succeeded and this package is logger-free by design.
+	// (e.g. set by MoveTo) is preserved, and a stale repo/number is refreshed.
+	// Caching is best-effort: resolution already succeeded and this package is
+	// logger-free by design.
 	rec.Repo = ref.Repo
 	rec.IssueNumber = ref.Number
 	_ = b.store.PutCard(cardID, rec)

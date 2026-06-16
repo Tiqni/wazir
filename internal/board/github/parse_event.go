@@ -99,15 +99,14 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		}
 		cardID := item.GetContentNodeID()
 		ev := board.Event{Kind: board.EventPhaseChanged, CardID: cardID, Dedup: delivery}
-		// Best-effort: the payload carries no repo, but if we already know the
-		// card's repo, populate it and drop events for repos outside the
-		// allow-list. A cold cache can't filter here — the resolver enforces it
-		// later when the card's repo is looked up.
+		// Best-effort routing hint: the payload carries no repo, so populate it
+		// from the cache *only when the cached repo is still allowed*. We do NOT
+		// drop on a cached repo that looks disallowed — a repo rename/transfer can
+		// make the cache stale, and there's no repo in the payload to re-check
+		// here. The authoritative, self-refreshing allow-list check happens in
+		// resolveCard when the worker looks the card up.
 		if b.store != nil {
-			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" {
-				if !b.repoAllowed(rec.Repo) {
-					return board.Event{Kind: board.EventIgnore}, nil
-				}
+			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
 				ev.Repo = rec.Repo
 			}
 		}
