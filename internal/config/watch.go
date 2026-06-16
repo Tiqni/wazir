@@ -9,7 +9,8 @@ import (
 )
 
 // ResolvePath returns the config file Load(flagConfig) would read, and ok=false
-// for an env-only run (no file to watch). When flagConfig is set it must exist.
+// for an env-only run (no file to watch). When flagConfig is set, ok reports
+// whether that file exists.
 func ResolvePath(flagConfig string) (path string, ok bool) {
 	if flagConfig != "" {
 		return flagConfig, fileExists(flagConfig)

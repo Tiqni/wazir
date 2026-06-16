@@ -120,21 +120,28 @@ func runServe(ctx context.Context, addr string) error {
 	// subset (claude.*, repos, bot_login, webhook_secret). Restart-only fields are
 	// ignored with a warning. Disabled for an env-only run (no file to watch).
 	if path, ok := config.ResolvePath(flagConfig); ok {
+		// startCfg is the config the process actually applied at startup; it stays
+		// fixed so restart-only fields are always compared against what's really
+		// running, not against whatever the file last said. (Advancing it would
+		// falsely warn when a restart-only field is reverted back to the running
+		// value.) lastRestartDiff de-dups the warning so a standing divergence is
+		// logged once, not on every reload. Both are touched only on the single
+		// Watch goroutine — no data race.
 		startCfg := cfg
+		var lastRestartDiff string
 		go func() {
 			err := config.Watch(ctx, path,
 				func(newCfg config.Config) {
-					if d := restartOnlyChanged(startCfg, newCfg); d != "" {
-						logger.Warn("config change requires a restart; ignored", zap.String("fields", d))
+					if d := restartOnlyChanged(startCfg, newCfg); d != lastRestartDiff {
+						if d != "" {
+							logger.Warn("config change requires a restart; ignored", zap.String("fields", d))
+						}
+						lastRestartDiff = d
 					}
 					brain.Reload(newCfg.Claude)
 					b.Reload(newCfg.Repos, newCfg.BotLogin, newCfg.GitHub.WebhookSecret)
 					worker.SetMaxBrainstormTurns(newCfg.Claude.MaxBrainstormTurns)
 					logger.Info("config reloaded")
-					// Advance the restart-only baseline so a given change is warned about
-					// once, not on every subsequent reload. Safe: onReload runs only on the
-					// single Watch goroutine.
-					startCfg = newCfg
 				},
 				func(err error) { logger.Warn("config reload failed; keeping current config", zap.Error(err)) },
 			)
