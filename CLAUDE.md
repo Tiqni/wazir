@@ -129,6 +129,7 @@ The `claude` section also carries `plugins_dir` (default `~/.claude/plugins`), `
 `superpowers@claude-plugins-official`), and `setting_sources` (default `user`) — env
 `WAZIR_CLAUDE_PLUGINS_DIR` / `WAZIR_CLAUDE_PLUGIN_ID` / `WAZIR_CLAUDE_SETTING_SOURCES`. The daemon
 authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in the environment (not the committed file).
+`wazir serve` live-reloads `wazir.yaml` via an fsnotify watcher for the safe subset (`claude.*` minus `bin`, `repos`, `bot_login`, `webhook_secret`); changes to auth/`project`/`store`/`forge`/`claude.bin`/`--addr` are restart-only (logged as ignored on reload).
 
 ## Testing strategy
 
