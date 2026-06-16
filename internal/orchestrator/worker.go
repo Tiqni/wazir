@@ -91,6 +91,17 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		card.Phase = board.PhaseBrainstorming
 		return w.brainstorm(ctx, card)
 	case ActBrainstorm:
+		// Re-brainstorm from Awaiting Answers (a human reply) or Spec Review (a
+		// revision request): move the card back to Brainstorming first so the rework
+		// is visible on the board (§3 loops back to Brainstorming) instead of the
+		// turn running silently in place. A card already in Brainstorming is left put
+		// to avoid a redundant self-move event.
+		if card.Phase != board.PhaseBrainstorming {
+			if err := w.board.MoveTo(ctx, card.ID, board.PhaseBrainstorming); err != nil {
+				return err
+			}
+			card.Phase = board.PhaseBrainstorming
+		}
 		return w.brainstorm(ctx, card)
 	case ActPlan:
 		return w.plan(ctx, card)

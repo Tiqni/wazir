@@ -549,3 +549,85 @@ func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {
 		t.Errorf("expected createWorktree then a stop before push, got %v", ff.calls)
 	}
 }
+
+// recordingBoard wraps the in-memory board to capture the ordered MoveTo phases,
+// so tests can assert intermediate transitions (memboard keeps only the current
+// phase). MoveTo records then delegates so GetCard still reflects the move.
+type recordingBoard struct {
+	*memboard.Board
+	moves []board.Phase
+}
+
+func (r *recordingBoard) MoveTo(ctx context.Context, cardID string, phase board.Phase) error {
+	r.moves = append(r.moves, phase)
+	return r.Board.MoveTo(ctx, cardID, phase)
+}
+
+// A revision request (human comment) on a Spec Review card must visibly loop the
+// card back to Brainstorming before reworking — not silently re-brainstorm in
+// place (§3: "Spec Review → changes requested → Brainstorming").
+func TestWorkerSpecReviewRevisionMovesBackToBrainstorming(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseSpecReview})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	ev := board.Event{Kind: board.EventCommentAdded, CardID: "I1",
+		Comment: &board.Comment{ID: "c1", Author: "human", Body: "please revise X"}}
+	if err := w.Process(ctx, ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(rb.moves) == 0 || rb.moves[0] != board.PhaseBrainstorming {
+		t.Errorf("first move = %v, want Brainstorming (visible rework)", rb.moves)
+	}
+	if brain.brainstormCalls != 1 {
+		t.Errorf("brain ran %d times, want 1", brain.brainstormCalls)
+	}
+	if card, _ := mb.GetCard(ctx, "I1"); card.Phase != board.PhaseAwaitingAnswers {
+		t.Errorf("final phase = %q, want AwaitingAnswers", card.Phase)
+	}
+}
+
+// A human reply on an Awaiting Answers card likewise loops back to Brainstorming
+// before the next turn (§3: "Awaiting Answers loops back to Brainstorming on reply").
+func TestWorkerAwaitingAnswersReplyMovesBackToBrainstorming(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseAwaitingAnswers})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	ev := board.Event{Kind: board.EventCommentAdded, CardID: "I1",
+		Comment: &board.Comment{ID: "c1", Author: "human", Body: "here are the answers"}}
+	if err := w.Process(ctx, ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(rb.moves) == 0 || rb.moves[0] != board.PhaseBrainstorming {
+		t.Errorf("first move = %v, want Brainstorming", rb.moves)
+	}
+	if card, _ := mb.GetCard(ctx, "I1"); card.Phase != board.PhaseSpecReview {
+		t.Errorf("final phase = %q, want SpecReview", card.Phase)
+	}
+}
+
+// A card already in Brainstorming must NOT be moved again (no redundant self-move
+// that would re-emit a projects_v2_item event).
+func TestWorkerBrainstormingNoRedundantMove(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhaseBrainstorming}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	// Only the terminal move (to AwaitingAnswers) — no leading move back to Brainstorming.
+	if slices.Contains(rb.moves[:max(0, len(rb.moves)-1)], board.PhaseBrainstorming) {
+		t.Errorf("redundant move to Brainstorming for an already-Brainstorming card; moves=%v", rb.moves)
+	}
+}
