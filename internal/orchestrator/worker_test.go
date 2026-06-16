@@ -525,6 +525,29 @@ func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
 	}
 }
 
+func TestWorkerSetMaxBrainstormTurnsLive(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, st, nil) // default cap 8 → 2 turns is under it
+
+	// Lower the cap live to 2; the card (2 turns) is now at the cap → escalate, no brain call, no clone.
+	w.SetMaxBrainstormTurns(2)
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain ran %d times; the live-lowered cap should escalate without a turn", brain.brainstormCalls)
+	}
+	if slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("escalation must not clone; calls=%v", ff.calls)
+	}
+}
+
 // A forge that returns an empty worktree path (no error) must fail closed rather
 // than run plan/execute in the daemon's cwd outside any worktree.
 func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {

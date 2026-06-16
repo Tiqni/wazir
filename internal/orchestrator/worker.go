@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 
@@ -24,8 +25,8 @@ type Worker struct {
 	store              store.Store
 	resolver           Resolver
 	log                *zap.Logger
-	base               string // PR base branch
-	maxBrainstormTurns int    // cap on the clarifying-question loop (M2)
+	base               string       // PR base branch
+	maxBrainstormTurns atomic.Int64 // cap on the clarifying-question loop (M2); hot-reloadable
 }
 
 // NewWorker builds a Worker. A nil logger is replaced with a no-op.
@@ -33,16 +34,23 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main", maxBrainstormTurns: defaultMaxBrainstormTurns}
+	w := &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main"}
+	w.maxBrainstormTurns.Store(defaultMaxBrainstormTurns)
+	return w
 }
 
 // WithMaxBrainstormTurns overrides the question-loop cap (e.g. from config).
-// A non-positive n is ignored, keeping the default. Returns w for chaining.
+// A non-positive n is ignored. Returns w for chaining.
 func (w *Worker) WithMaxBrainstormTurns(n int) *Worker {
-	if n > 0 {
-		w.maxBrainstormTurns = n
-	}
+	w.SetMaxBrainstormTurns(n)
 	return w
+}
+
+// SetMaxBrainstormTurns hot-swaps the question-loop cap (config reload). Ignores n <= 0.
+func (w *Worker) SetMaxBrainstormTurns(n int) {
+	if n > 0 {
+		w.maxBrainstormTurns.Store(int64(n))
+	}
 }
 
 // WithBase overrides the PR base branch (from config). Empty is ignored.
@@ -122,8 +130,9 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 	// Cost circuit breaker: once the question loop has hit the cap, escalate to a
 	// human *without* another (paid) model call. Checked before brain.Brainstorm
 	// so the cap actually prevents spend (spec §6: "no further spend").
-	if rec.BrainstormTurns >= w.maxBrainstormTurns {
-		msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", w.maxBrainstormTurns)
+	maxTurns := int(w.maxBrainstormTurns.Load())
+	if rec.BrainstormTurns >= maxTurns {
+		msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", maxTurns)
 		if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
 			return err
 		}
