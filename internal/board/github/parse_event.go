@@ -18,12 +18,14 @@ func headerGet(h map[string]string, key string) string {
 	return ""
 }
 
-func (b *GitHubBoard) repoAllowed(full string) bool {
-	repos := b.snap().repos
-	if len(repos) == 0 {
+// repoAllowed takes the caller's reloadable snapshot so one logical operation
+// (a ParseEvent call, a resolveCard call) uses a single consistent snapshot
+// rather than re-loading the atomic pointer per check.
+func (b *GitHubBoard) repoAllowed(rl *boardReloadable, full string) bool {
+	if len(rl.repos) == 0 {
 		return true // no allow-list configured = allow all
 	}
-	for _, r := range repos {
+	for _, r := range rl.repos {
 		if r == full {
 			return true
 		}
@@ -49,7 +51,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 	switch e := raw.(type) {
 	case *github.IssuesEvent:
 		repo := e.GetRepo().GetFullName()
-		if !b.repoAllowed(repo) {
+		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		ev := board.Event{
@@ -66,7 +68,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 
 	case *github.IssueCommentEvent:
 		repo := e.GetRepo().GetFullName()
-		if !b.repoAllowed(repo) {
+		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		if e.GetAction() != "created" {
@@ -108,7 +110,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		// here. The authoritative, self-refreshing allow-list check happens in
 		// resolveCard when the worker looks the card up.
 		if b.store != nil {
-			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
+			if rec, ok, err := b.store.GetCard(cardID); err == nil && ok && rec.Repo != "" && b.repoAllowed(rl, rec.Repo) {
 				ev.Repo = rec.Repo
 			}
 		}

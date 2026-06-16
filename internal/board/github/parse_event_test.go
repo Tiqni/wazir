@@ -167,11 +167,11 @@ func TestParseProjectsV2ItemDoesNotDropOnStaleCachedRepo(t *testing.T) {
 
 func TestBoardReloadSwapsAllowListAndSecret(t *testing.T) {
 	b := newParser() // repos=["octocat/hello"], botLogin="wazir-bot", webhookSecret="shh"
-	if !b.repoAllowed("octocat/hello") || b.repoAllowed("octocat/other") {
+	if rl := b.snap(); !b.repoAllowed(rl, "octocat/hello") || b.repoAllowed(rl, "octocat/other") {
 		t.Fatal("precondition: initial allow-list")
 	}
 	b.Reload([]string{"octocat/other"}, "new-bot", "newsecret")
-	if b.repoAllowed("octocat/hello") || !b.repoAllowed("octocat/other") {
+	if rl := b.snap(); b.repoAllowed(rl, "octocat/hello") || !b.repoAllowed(rl, "octocat/other") {
 		t.Errorf("allow-list not swapped by Reload")
 	}
 	// New webhook secret takes effect: a payload signed with the OLD secret now fails.

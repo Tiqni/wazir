@@ -206,14 +206,15 @@ func (b *GitHubBoard) resolveCard(ctx context.Context, cardID string) (issueRef,
 	// moved accounts); rather than reject forever on the stale value, fall through
 	// to a fresh node lookup and refresh the cache below. resolveCard is thus the
 	// single, self-healing allow-list gate.
-	if ok && rec.Repo != "" && b.repoAllowed(rec.Repo) {
+	rl := b.snap() // one snapshot for this resolve op
+	if ok && rec.Repo != "" && b.repoAllowed(rl, rec.Repo) {
 		return issueRef{Repo: rec.Repo, Number: rec.IssueNumber}, nil
 	}
 	ref, err := b.api.ResolveIssue(ctx, cardID)
 	if err != nil {
 		return issueRef{}, fmt.Errorf("resolve issue %s: %w", cardID, err)
 	}
-	if !b.repoAllowed(ref.Repo) {
+	if !b.repoAllowed(rl, ref.Repo) {
 		return issueRef{}, fmt.Errorf("%w: %s", ErrRepoNotAllowed, ref.Repo)
 	}
 	// Merge into any existing record so a previously-cached ProjectItemID
