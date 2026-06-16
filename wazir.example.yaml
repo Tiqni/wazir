@@ -37,9 +37,12 @@ store:
 # own login, not this file. Override any field via WAZIR_CLAUDE_<FIELD>.
 claude:
   bin: claude            # path to the claude binary
-  model: ""              # "" = CLI default
-  timeout: 5m            # per-invocation deadline
+  model: ""              # "" = CLI default; pin e.g. claude-sonnet-4-6 (faster) or claude-opus-4-8
+  timeout: 5m            # per-invocation deadline for brainstorm turns
   max_brainstorm_turns: 8 # cap on the clarifying-question loop
+  plan_timeout: 45m      # writing-plans turn deadline; a full plan can exceed 10m and fail the card
+  execute_timeout: 60m   # execute is heavier than plan — give it the most headroom
+  execute_allowed_tools: "Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
 
 # Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
 # each in-flight card gets its own worktree. Auth uses a fresh App installation
@@ -50,12 +53,6 @@ forge:
   clone_root: ~/.wazir/clones
   worktree_root: ~/.wazir/worktrees
   base_branch: main
-
-# (M4/M5 additions to the claude section — merge into the existing claude block.)
-# claude:
-#   plan_timeout: 10m
-#   execute_timeout: 30m   # execute needs longer than brainstorm
-#   execute_allowed_tools: "Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
 #   plugins_dir: ~/.claude/plugins                   # M5: registry symlinked into each plan/execute config dir
 #   plugin_id: superpowers@claude-plugins-official   # M5: plugin enabled in the seeded settings.json
 #   setting_sources: user                            # M5: --setting-sources (spike-pinned; blocks repo settings widening tools)

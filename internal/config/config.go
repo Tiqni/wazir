@@ -34,8 +34,8 @@ type ClaudeConfig struct {
 	Model               string        `fig:"model"`                            // WAZIR_CLAUDE_MODEL ("" = CLI default)
 	Timeout             time.Duration `fig:"timeout" default:"5m"`             // WAZIR_CLAUDE_TIMEOUT
 	MaxBrainstormTurns  int           `fig:"max_brainstorm_turns" default:"8"` // WAZIR_CLAUDE_MAX_BRAINSTORM_TURNS
-	PlanTimeout         time.Duration `fig:"plan_timeout" default:"10m"`       // WAZIR_CLAUDE_PLAN_TIMEOUT
-	ExecuteTimeout      time.Duration `fig:"execute_timeout" default:"30m"`    // WAZIR_CLAUDE_EXECUTE_TIMEOUT
+	PlanTimeout         time.Duration `fig:"plan_timeout" default:"45m"`       // WAZIR_CLAUDE_PLAN_TIMEOUT — a full writing-plans run can exceed 10m
+	ExecuteTimeout      time.Duration `fig:"execute_timeout" default:"60m"`    // WAZIR_CLAUDE_EXECUTE_TIMEOUT — execute is heavier than plan
 	ExecuteAllowedTools string        `fig:"execute_allowed_tools" default:"Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"`
 	PluginsDir          string        `fig:"plugins_dir" default:"~/.claude/plugins"`                 // WAZIR_CLAUDE_PLUGINS_DIR — registry symlinked into each plan/execute config dir
 	PluginID            string        `fig:"plugin_id" default:"superpowers@claude-plugins-official"` // WAZIR_CLAUDE_PLUGIN_ID — enabled in the seeded settings.json

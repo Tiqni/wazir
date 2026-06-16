@@ -224,11 +224,11 @@ func TestForgeAndClaudeM4Defaults(t *testing.T) {
 	if strings.HasPrefix(c.Forge.CloneRoot, "~") {
 		t.Errorf("CloneRoot not expanded: %q", c.Forge.CloneRoot)
 	}
-	if c.Claude.PlanTimeout != 10*time.Minute {
-		t.Errorf("PlanTimeout = %s, want 10m", c.Claude.PlanTimeout)
+	if c.Claude.PlanTimeout != 45*time.Minute {
+		t.Errorf("PlanTimeout = %s, want 45m", c.Claude.PlanTimeout)
 	}
-	if c.Claude.ExecuteTimeout != 30*time.Minute {
-		t.Errorf("ExecuteTimeout = %s, want 30m", c.Claude.ExecuteTimeout)
+	if c.Claude.ExecuteTimeout != 60*time.Minute {
+		t.Errorf("ExecuteTimeout = %s, want 60m", c.Claude.ExecuteTimeout)
 	}
 	if c.Claude.ExecuteAllowedTools == "" {
 		t.Error("ExecuteAllowedTools must default non-empty")
