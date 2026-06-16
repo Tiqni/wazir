@@ -28,12 +28,9 @@ func loadFixture(t *testing.T, name string) []byte {
 }
 
 func newParser() *GitHubBoard {
-	return &GitHubBoard{
-		botLogin:      "wazir-bot",
-		webhookSecret: "shh",
-		projectNodeID: "PROJECT_NODE_1",
-		repos:         []string{"octocat/hello"},
-	}
+	b := &GitHubBoard{projectNodeID: "PROJECT_NODE_1"}
+	b.Reload([]string{"octocat/hello"}, "wazir-bot", "shh")
+	return b
 }
 
 func headersFor(event, delivery, sig string) map[string]string {
@@ -104,7 +101,7 @@ func TestParseRejectsBadSignature(t *testing.T) {
 
 func TestParseDropsForeignRepo(t *testing.T) {
 	b := newParser()
-	b.repos = []string{"octocat/other"}
+	b.Reload([]string{"octocat/other"}, "wazir-bot", "shh")
 	payload := loadFixture(t, "issues_opened.json")
 	h := headersFor("issues", "d5", sign([]byte("shh"), payload))
 	ev, err := b.ParseEvent(h, payload)
@@ -165,6 +162,27 @@ func TestParseProjectsV2ItemDoesNotDropOnStaleCachedRepo(t *testing.T) {
 	}
 	if ev.Repo != "" {
 		t.Errorf("ev.Repo = %q, want empty (a disallowed cached repo must not be trusted)", ev.Repo)
+	}
+}
+
+func TestBoardReloadSwapsAllowListAndSecret(t *testing.T) {
+	b := newParser() // repos=["octocat/hello"], botLogin="wazir-bot", webhookSecret="shh"
+	if !b.repoAllowed("octocat/hello") || b.repoAllowed("octocat/other") {
+		t.Fatal("precondition: initial allow-list")
+	}
+	b.Reload([]string{"octocat/other"}, "new-bot", "newsecret")
+	if b.repoAllowed("octocat/hello") || !b.repoAllowed("octocat/other") {
+		t.Errorf("allow-list not swapped by Reload")
+	}
+	// New webhook secret takes effect: a payload signed with the OLD secret now fails.
+	payload := loadFixture(t, "issues_opened.json")
+	h := headersFor("issues", "dR", sign([]byte("shh"), payload)) // old secret
+	if _, err := b.ParseEvent(h, payload); err == nil {
+		t.Errorf("expected signature failure under the reloaded secret")
+	}
+	h2 := headersFor("issues", "dR2", sign([]byte("newsecret"), payload))
+	if _, err := b.ParseEvent(h2, payload); err != nil {
+		t.Errorf("payload signed with the new secret should validate: %v", err)
 	}
 }
 
