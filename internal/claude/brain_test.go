@@ -295,7 +295,9 @@ func TestBrainReloadSwapsModel(t *testing.T) {
 		t.Fatalf("first turn argv missing model-a:\n%s", args)
 	}
 
-	br.Reload(config.ClaudeConfig{Bin: bin, Model: "model-b", PlanTimeout: 5 * time.Second})
+	// Bin is intentionally omitted: Reload does not change the binary (restart-only);
+	// the fake binary is already wired into the runner from New.
+	br.Reload(config.ClaudeConfig{Model: "model-b", PlanTimeout: 5 * time.Second})
 	if _, err := br.Plan(context.Background(), orchestrator.PlanInput{Spec: "s", WorktreePath: t.TempDir()}); err != nil {
 		t.Fatalf("Plan after reload: %v", err)
 	}
