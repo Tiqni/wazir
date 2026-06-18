@@ -78,6 +78,8 @@ const (
 	EventCommentAdded
 	EventPhaseChanged
 	EventApprovalGiven
+	EventReviewSubmitted // M5: a decision-grade PR review (approved | changes_requested) was submitted
+	EventChecksCompleted // M5: a PR's check suite completed
 )
 
 // Event is a provider webhook normalized to domain vocabulary.
