@@ -57,6 +57,7 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 // OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
 	prURL       string
+	prNumber    int
 	pushErr     error
 	wtPath      string // path CreateWorktree returns ("" by default)
 	clonePath   string // path EnsureClone returns ("" by default)
@@ -88,9 +89,9 @@ func (f *fakeForge) PushBranch(ctx context.Context, repo, branch string) error {
 	f.pushed = true
 	return nil
 }
-func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
+func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, int, error) {
 	f.calls = append(f.calls, "openPR")
-	return f.prURL, nil
+	return f.prURL, f.prNumber, nil
 }
 
 func (f *fakeForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
@@ -529,6 +530,32 @@ func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
 	// The brain must NOT have been called (fail-fast before any model turn).
 	if len(ff.calls) != 0 {
 		t.Errorf("forge must not be touched on a worktreeless re-entry, got calls %v", ff.calls)
+	}
+}
+
+// executePhase persists the opened PR's number on the CardRecord and writes the
+// repo#pr -> issue PR-index, so PR webhooks later resolve back to this card.
+func TestExecutePersistsPRNumberAndIndex(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "octocat/hello", Title: "t", Phase: board.PhaseBuilding})
+	st := store.NewMemory()
+	// A Building re-entry path reads worktree/branch/plan from the record.
+	st.PutCard("I1", store.CardRecord{Repo: "octocat/hello", IssueNumber: 41, WorktreePath: "/wt", Branch: "feature/issue-41-t", PlanPath: "/wt/plan.md"})
+	brain := &scriptedBrain{execute: []ExecuteResult{{Status: StatusComplete, Notes: "done", TestSummary: "ok"}}}
+	ff := &fakeForge{prURL: "https://github.com/octocat/hello/pull/9", prNumber: 9, wtPath: "/wt"}
+	w := NewWorker(b, ff, brain, st, nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhaseBuilding}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	rec, _, _ := st.GetCard("I1")
+	if rec.PRNumber != 9 {
+		t.Errorf("CardRecord.PRNumber = %d, want 9", rec.PRNumber)
+	}
+	id, ok, _ := st.GetPRIndex("octocat/hello", 9)
+	if !ok || id != "I1" {
+		t.Errorf("PR-index = (%q, %v), want (I1, true)", id, ok)
 	}
 }
 

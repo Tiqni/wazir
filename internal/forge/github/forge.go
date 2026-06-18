@@ -164,11 +164,11 @@ func (f *GitHubForge) resetOrigin(ctx context.Context, clone, repo string) error
 	return nil
 }
 
-// OpenPR opens a pull request and returns its HTML URL.
-func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
+// OpenPR opens a pull request and returns its HTML URL and number.
+func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, int, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	pr, _, err := f.rest.PullRequests.Create(ctx, owner, name, &github.NewPullRequest{
 		Title: &title,
@@ -177,9 +177,9 @@ func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, bod
 		Body:  &body,
 	})
 	if err != nil {
-		return "", fmt.Errorf("create pr: %w", err)
+		return "", 0, fmt.Errorf("create pr: %w", err)
 	}
-	return pr.GetHTMLURL(), nil
+	return pr.GetHTMLURL(), pr.GetNumber(), nil
 }
 
 // PRStatus fetches the PR's head SHA, reduces its reviews to a single decision,

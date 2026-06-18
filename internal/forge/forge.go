@@ -31,8 +31,8 @@ type CodeForge interface {
 	RemoveWorktree(ctx context.Context, repo, path string) error
 	// PushBranch pushes branch to origin.
 	PushBranch(ctx context.Context, repo, branch string) error
-	// OpenPR opens a pull request and returns its URL.
-	OpenPR(ctx context.Context, repo, branch, base, title, body string) (prURL string, err error)
+	// OpenPR opens a pull request and returns its URL and number.
+	OpenPR(ctx context.Context, repo, branch, base, title, body string) (prURL string, prNumber int, err error)
 	// PRStatus reports the current review decision + CI conclusion for a PR.
 	PRStatus(ctx context.Context, repo string, prNumber int) (PRStatus, error)
 }

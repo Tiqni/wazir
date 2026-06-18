@@ -20,7 +20,7 @@ func TestOpenPRPostsCorrectRequest(t *testing.T) {
 		raw, _ := io.ReadAll(r.Body)
 		json.Unmarshal(raw, &payload)
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"html_url":"https://github.com/octocat/hello/pull/9"}`))
+		w.Write([]byte(`{"number":9,"html_url":"https://github.com/octocat/hello/pull/9"}`))
 	}))
 	defer srv.Close()
 
@@ -29,12 +29,15 @@ func TestOpenPRPostsCorrectRequest(t *testing.T) {
 	c.BaseURL = u
 	f := &GitHubForge{rest: c}
 
-	prURL, err := f.OpenPR(context.Background(), "octocat/hello", "feature/x", "main", "Add X", "body")
+	prURL, prNumber, err := f.OpenPR(context.Background(), "octocat/hello", "feature/x", "main", "Add X", "body")
 	if err != nil {
 		t.Fatalf("OpenPR: %v", err)
 	}
 	if prURL != "https://github.com/octocat/hello/pull/9" {
 		t.Errorf("prURL = %q", prURL)
+	}
+	if prNumber != 9 {
+		t.Errorf("prNumber = %d, want 9", prNumber)
 	}
 	if gotPath != "/repos/octocat/hello/pulls" {
 		t.Errorf("path = %q", gotPath)

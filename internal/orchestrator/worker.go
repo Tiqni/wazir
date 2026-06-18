@@ -239,9 +239,23 @@ func (w *Worker) executePhase(ctx context.Context, card board.Card, worktreePath
 	if err := w.forge.PushBranch(ctx, card.Repo, branch); err != nil {
 		return fmt.Errorf("push branch: %w", err)
 	}
-	url, err := w.forge.OpenPR(ctx, card.Repo, branch, w.base, card.Title, prBody(res))
+	url, prNumber, err := w.forge.OpenPR(ctx, card.Repo, branch, w.base, card.Title, prBody(res))
 	if err != nil {
 		return fmt.Errorf("open pr: %w", err)
+	}
+	// Persist PR identity so the observe+report phase (and phase-2 rework) can
+	// resolve this PR back to the card: the number on the record + the
+	// repo#pr -> issue reverse index ParseEvent reads.
+	rec, _, err := w.store.GetCard(card.ID)
+	if err != nil {
+		return fmt.Errorf("read card record %s: %w", card.ID, err)
+	}
+	rec.PRNumber = prNumber
+	if err := w.store.PutCard(card.ID, rec); err != nil {
+		return fmt.Errorf("persist pr number: %w", err)
+	}
+	if err := w.store.PutPRIndex(card.Repo, prNumber, card.ID); err != nil {
+		return fmt.Errorf("persist pr index: %w", err)
 	}
 	if err := w.board.PostComment(ctx, card.ID, "Opened PR: "+url); err != nil {
 		return err

@@ -111,8 +111,8 @@ func (noForge) CreateWorktree(ctx context.Context, repo, branch string) (string,
 }
 func (noForge) RemoveWorktree(ctx context.Context, repo, path string) error { return nil }
 func (noForge) PushBranch(ctx context.Context, repo, branch string) error   { return nil }
-func (noForge) OpenPR(ctx context.Context, repo, branch, base, t, b string) (string, error) {
-	return "", nil
+func (noForge) OpenPR(ctx context.Context, repo, branch, base, t, b string) (string, int, error) {
+	return "", 0, nil
 }
 func (noForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
 	return forge.PRStatus{}, nil
