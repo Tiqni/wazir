@@ -57,7 +57,13 @@ func (Resolver) Resolve(card board.Card, ev board.Event, lastCommentID string) D
 	case board.PhaseBuilding:
 		return Decision{ActExecute}
 
-	default: // PRReview, Done, Failed
+	case board.PhasePRReview:
+		if ev.Kind == board.EventReviewSubmitted || ev.Kind == board.EventChecksCompleted {
+			return Decision{ActReport}
+		}
+		return Decision{ActNone}
+
+	default: // Done, Failed
 		return Decision{ActNone}
 	}
 }

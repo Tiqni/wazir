@@ -94,6 +94,8 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		return w.brainstorm(ctx, card)
 	case ActPlan:
 		return w.plan(ctx, card)
+	case ActReport:
+		return w.reportPhase(ctx, card)
 	case ActExecute:
 		// Direct Building re-entry (crash recovery / re-delivered Building event):
 		// recover the worktree path, branch, and plan path persisted by plan().
@@ -274,6 +276,75 @@ func (w *Worker) executePhase(ctx context.Context, card board.Card, worktreePath
 
 func prBody(res ExecuteResult) string {
 	return "Automated PR by Wazir.\n\n" + res.Notes + "\n\nTests: " + res.TestSummary
+}
+
+// reportPhase observes the PR's current review + CI state and reports it on the
+// card. Read failures are SOFT (logged, no comment, no move, no delta write) —
+// the error is ours, not the card's. A comment+move only happens on a delta.
+func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
+	rec, ok, err := w.store.GetCard(card.ID)
+	if err != nil {
+		return fmt.Errorf("read card record %s: %w", card.ID, err)
+	}
+	if !ok || rec.PRNumber == 0 {
+		w.log.Warn("report skipped: no PR number for card", zap.String("card", card.ID))
+		return nil
+	}
+	status, err := w.forge.PRStatus(ctx, card.Repo, rec.PRNumber)
+	if err != nil {
+		w.log.Warn("PRStatus read failed; skipping report (soft)", zap.String("card", card.ID), zap.Error(err))
+		return nil
+	}
+	reviewChanged := status.ReviewDecision != rec.LastReviewState
+	ciChanged := status.CIConclusion != rec.LastCIConclusion
+	if !reviewChanged && !ciChanged {
+		return nil
+	}
+	if comment := reportComment(status, reviewChanged, ciChanged); comment != "" {
+		if err := w.board.PostComment(ctx, card.ID, comment); err != nil {
+			return fmt.Errorf("post report comment: %w", err)
+		}
+	}
+	if status.ReviewDecision == "changes_requested" || status.CIConclusion == "failure" {
+		if err := w.board.MoveTo(ctx, card.ID, board.PhaseFailed); err != nil {
+			return fmt.Errorf("move to Failed: %w", err)
+		}
+	}
+	// Persist delta state only after a successful comment + move, so a mid-flight
+	// failure re-reports on retry rather than being swallowed.
+	rec.LastReviewState = status.ReviewDecision
+	rec.LastCIConclusion = status.CIConclusion
+	if err := w.store.PutCard(card.ID, rec); err != nil {
+		return fmt.Errorf("persist report state: %w", err)
+	}
+	return nil
+}
+
+// reportComment renders one line per changed decision-grade dimension. Empty
+// when nothing reportable changed (e.g. a transition to pending/review_required).
+func reportComment(s forge.PRStatus, reviewChanged, ciChanged bool) string {
+	var lines []string
+	if reviewChanged {
+		switch s.ReviewDecision {
+		case "changes_requested":
+			lines = append(lines, "🔄 Changes requested. Moving to Failed.")
+		case "approved":
+			lines = append(lines, "✅ PR approved.")
+		}
+	}
+	if ciChanged {
+		switch s.CIConclusion {
+		case "failure":
+			detail := ""
+			if len(s.FailingChecks) > 0 {
+				detail = ": " + strings.Join(s.FailingChecks, ", ")
+			}
+			lines = append(lines, "❌ CI failed"+detail+". Moving to Failed.")
+		case "success":
+			lines = append(lines, "✅ CI passed.")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (w *Worker) fail(ctx context.Context, cardID string, cause error) {

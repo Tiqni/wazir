@@ -30,6 +30,8 @@ func TestResolverTable(t *testing.T) {
 		{"planning -> plan", board.PhasePlanning, board.Event{Kind: board.EventPhaseChanged, NewPhase: board.PhasePlanning}, "", ActPlan},
 		{"building -> execute", board.PhaseBuilding, board.Event{Kind: board.EventPhaseChanged}, "", ActExecute},
 		{"prreview -> none", board.PhasePRReview, board.Event{Kind: board.EventPhaseChanged}, "", ActNone},
+		{"prreview review submitted -> report", board.PhasePRReview, board.Event{Kind: board.EventReviewSubmitted}, "", ActReport},
+		{"prreview checks completed -> report", board.PhasePRReview, board.Event{Kind: board.EventChecksCompleted}, "", ActReport},
 		{"done -> none", board.PhaseDone, board.Event{Kind: board.EventCommentAdded, Comment: humanComment}, "", ActNone},
 		{"failed -> none", board.PhaseFailed, board.Event{Kind: board.EventPhaseChanged}, "", ActNone},
 		{"already-processed comment -> none", board.PhaseAwaitingAnswers, board.Event{Kind: board.EventCommentAdded, Comment: humanComment}, "h1", ActNone},

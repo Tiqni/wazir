@@ -9,6 +9,7 @@ const (
 	ActBrainstorm       // run a brainstorm turn
 	ActPlan             // run a plan turn (then build)
 	ActExecute          // run an execute turn (then open PR)
+	ActReport           // PRReview: observe PR review/CI state and report it
 )
 
 // Decision is the Resolver's output: a single Action, no I/O.
@@ -26,6 +27,8 @@ func (a Action) String() string {
 		return "Plan"
 	case ActExecute:
 		return "Execute"
+	case ActReport:
+		return "Report"
 	default:
 		return "None"
 	}
