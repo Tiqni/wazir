@@ -222,6 +222,8 @@ func (f *GitHubForge) PRStatus(ctx context.Context, repo string, prNumber int) (
 // APPROVED / CHANGES_REQUESTED counts (COMMENTED / DISMISSED are ignored).
 // Any latest CHANGES_REQUESTED => changes_requested; else any APPROVED =>
 // approved; else "" (review_required, treated as no decision).
+// NB: the REST review state is UPPERCASE here; the webhook payload parsed in
+// the board impl uses the lowercase form — keep the two casings straight.
 func reduceReviewDecision(reviews []*github.PullRequestReview) string {
 	latest := map[string]string{} // login -> latest decisive state (uppercase)
 	for _, r := range reviews {

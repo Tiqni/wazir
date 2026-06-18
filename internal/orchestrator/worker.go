@@ -305,7 +305,10 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 			return fmt.Errorf("post report comment: %w", err)
 		}
 	}
-	if status.ReviewDecision == "changes_requested" || status.CIConclusion == "failure" {
+	// Move only on the dimension that just changed, so re-surfacing an
+	// already-reported failing state in the *other* dimension can't re-move.
+	if (reviewChanged && status.ReviewDecision == "changes_requested") ||
+		(ciChanged && status.CIConclusion == "failure") {
 		if err := w.board.MoveTo(ctx, card.ID, board.PhaseFailed); err != nil {
 			return fmt.Errorf("move to Failed: %w", err)
 		}

@@ -136,7 +136,9 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		if e.GetAction() != "submitted" {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
-		// Decision-grade only: ignore "commented"/"dismissed" reviews.
+		// Decision-grade only: ignore "commented"/"dismissed" reviews. Webhook
+		// review.state is lowercase here (the REST API used by forge.PRStatus
+		// returns UPPERCASE — keep the two casings straight).
 		if s := e.GetReview().GetState(); s != "approved" && s != "changes_requested" {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
@@ -169,7 +171,9 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
 		// Wazir opens exactly one PR per card off its own branch, so the first
-		// (typically only) PR in the suite is the card's PR.
+		// (typically only) PR in the suite is the card's PR. (GitHub omits
+		// cross-repo/fork PRs from check_suite.pull_requests, but Wazir's PRs are
+		// always same-repo, so the array is populated — empty above => not ours.)
 		cardID, ok := b.lookupPRIndex(repo, prs[0].GetNumber())
 		if !ok {
 			return board.Event{Kind: board.EventIgnore}, nil
