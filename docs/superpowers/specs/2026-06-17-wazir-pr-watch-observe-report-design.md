@@ -33,6 +33,13 @@ cleanly on top of it (a "Failed card that has a PR" is the phase-2 rework trigge
 
 - Re-entering the worktree to make code changes (auto-fix loop).
 - Surfacing individual inline review comments.
+- **Acting on plain PR conversation comments** (e.g. "the linter is failing").
+  These are free-text human direction with no structured status, and the only useful
+  response — actually doing the work — *is* the auto-fix loop. They are the natural
+  **phase-2 rework trigger**; that spec decides the trigger semantics (any comment? a
+  `@wazir`-style command? only changes-requested reviews?) and must route them through
+  the same PR-index reverse-map built here (a PR comment's issue node ID is the *PR's*,
+  not the card's).
 - Moving a card to `Done` (implies merge — human-gated).
 - Polling / startup reconcile for events missed while the daemon is down. (Webhook
   delivery can be missed if `wazir serve` is down; acceptable for phase 1.)
@@ -86,6 +93,12 @@ worker opens the PR it knows **both** (the card's issue node ID and `pr.GetNumbe
 so it writes a small reverse index `repo#prNumber → issueNodeID` into the store.
 `ParseEvent` reverse-looks-up through it. O(1), no branch-name parsing, no extra API
 call. A PR webhook with no index entry is not a Wazir card → `EventIgnore`.
+
+**Guard existing `issue_comment` handling.** Conversation comments on a PR also arrive
+as `issue_comment` events, but their `issue` node ID is the *PR's*, not the card's
+issue — today's handler would map them to a bogus card ID. Phase 1 adds a guard:
+`IssueCommentEvent` where `e.GetIssue().IsPullRequest()` (i.e. `PullRequestLinks != nil`)
+→ `EventIgnore`. (Phase-2 rework will instead route these through the PR-index above.)
 
 ## Data flow
 
