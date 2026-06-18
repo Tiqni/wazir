@@ -25,6 +25,9 @@ func (shapeStub) PushBranch(ctx context.Context, repo, branch string) error   { 
 func (shapeStub) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
 	return "", nil
 }
+func (shapeStub) PRStatus(ctx context.Context, repo string, prNumber int) (PRStatus, error) {
+	return PRStatus{}, nil
+}
 
 func TestCodeForgeShape(t *testing.T) {
 	var _ CodeForge = shapeStub{}

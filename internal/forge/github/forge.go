@@ -182,4 +182,100 @@ func (f *GitHubForge) OpenPR(ctx context.Context, repo, branch, base, title, bod
 	return pr.GetHTMLURL(), nil
 }
 
+// PRStatus fetches the PR's head SHA, reduces its reviews to a single decision,
+// and reduces its check-runs to a single CI conclusion. Provider types stay here.
+func (f *GitHubForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return forge.PRStatus{}, err
+	}
+	pr, _, err := f.rest.PullRequests.Get(ctx, owner, name, prNumber)
+	if err != nil {
+		return forge.PRStatus{}, fmt.Errorf("get pr: %w", err)
+	}
+	headSHA := pr.GetHead().GetSHA()
+
+	// No pagination loop: PerPage:100 is sufficient for Wazir's scale (bot-opened
+	// PRs on org repos). A PR with >100 reviews or a SHA with >100 check-runs would
+	// silently drop the overflow.
+	reviews, _, err := f.rest.PullRequests.ListReviews(ctx, owner, name, prNumber, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return forge.PRStatus{}, fmt.Errorf("list reviews: %w", err)
+	}
+
+	runs, _, err := f.rest.Checks.ListCheckRunsForRef(ctx, owner, name, headSHA, &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}})
+	if err != nil {
+		return forge.PRStatus{}, fmt.Errorf("list check-runs: %w", err)
+	}
+
+	review := reduceReviewDecision(reviews)
+	ci, failing := reduceCIConclusion(runs)
+	return forge.PRStatus{
+		ReviewDecision: review,
+		CIConclusion:   ci,
+		FailingChecks:  failing,
+		HeadSHA:        headSHA,
+	}, nil
+}
+
+// reduceReviewDecision mirrors GitHub's rule: only a reviewer's latest
+// APPROVED / CHANGES_REQUESTED counts (COMMENTED / DISMISSED are ignored).
+// Any latest CHANGES_REQUESTED => changes_requested; else any APPROVED =>
+// approved; else "" (review_required, treated as no decision).
+func reduceReviewDecision(reviews []*github.PullRequestReview) string {
+	latest := map[string]string{} // login -> latest decisive state (uppercase)
+	for _, r := range reviews {
+		state := r.GetState()
+		if state != "APPROVED" && state != "CHANGES_REQUESTED" {
+			continue
+		}
+		latest[r.GetUser().GetLogin()] = state // reviews arrive chronologically
+	}
+	approved := false
+	for _, s := range latest {
+		if s == "CHANGES_REQUESTED" {
+			return "changes_requested"
+		}
+		if s == "APPROVED" {
+			approved = true
+		}
+	}
+	if approved {
+		return "approved"
+	}
+	return ""
+}
+
+// reduceCIConclusion: no runs => ""; any run not completed => "pending";
+// else any failing conclusion => "failure" (+ names); else "success".
+func reduceCIConclusion(runs *github.ListCheckRunsResults) (string, []string) {
+	// Guard on the slice we actually iterate (not GetTotal()'s envelope count):
+	// an empty slice => no checks we can see => "" (never a false "success").
+	if runs == nil || len(runs.CheckRuns) == 0 {
+		return "", nil
+	}
+	var failing []string
+	pending := false
+	for _, run := range runs.CheckRuns {
+		if run.GetStatus() != "completed" {
+			pending = true
+			continue
+		}
+		switch run.GetConclusion() {
+		case "failure", "timed_out", "cancelled", "action_required":
+			failing = append(failing, run.GetName())
+		}
+	}
+	// Pending wins over failure: while any run is still in flight the suite
+	// isn't settled, so don't declare failure (or move the card to Failed)
+	// prematurely — wait for the next check_suite event when everything is done.
+	if pending {
+		return "pending", nil
+	}
+	if len(failing) > 0 {
+		return "failure", failing
+	}
+	return "success", nil
+}
+
 var _ forge.CodeForge = (*GitHubForge)(nil)
