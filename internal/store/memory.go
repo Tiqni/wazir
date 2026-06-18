@@ -12,6 +12,7 @@ type Memory struct {
 	cards      map[string]CardRecord
 	deliveries map[string]bool
 	locks      map[string]lockEntry
+	prIndex    map[string]string
 	now        func() time.Time
 }
 
@@ -27,6 +28,7 @@ func NewMemory() *Memory {
 		cards:      map[string]CardRecord{},
 		deliveries: map[string]bool{},
 		locks:      map[string]lockEntry{},
+		prIndex:    map[string]string{},
 		now:        time.Now,
 	}
 }
@@ -73,6 +75,20 @@ func (m *Memory) PutCard(issueNodeID string, rec CardRecord) error {
 	defer m.mu.Unlock()
 	m.cards[issueNodeID] = rec
 	return nil
+}
+
+func (m *Memory) PutPRIndex(repo string, prNumber int, issueNodeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prIndex[prIndexKey(repo, prNumber)] = issueNodeID
+	return nil
+}
+
+func (m *Memory) GetPRIndex(repo string, prNumber int) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.prIndex[prIndexKey(repo, prNumber)]
+	return id, ok, nil
 }
 
 func (m *Memory) SeenDelivery(id string) (bool, error) {
