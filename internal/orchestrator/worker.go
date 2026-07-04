@@ -313,7 +313,8 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 			return fmt.Errorf("move to Failed: %w", err)
 		}
 	}
-	// Persist delta state only after a successful comment + move, so a mid-flight
+	// Persist delta state only after the successful board writes above (the comment,
+	// and a move when one was warranted — approved/green stays put), so a mid-flight
 	// failure re-reports on retry rather than being swallowed.
 	rec.LastReviewState = status.ReviewDecision
 	rec.LastCIConclusion = status.CIConclusion
@@ -323,8 +324,9 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 	return nil
 }
 
-// reportComment renders one line per changed decision-grade dimension. Empty
-// when nothing reportable changed (e.g. a transition to pending/review_required).
+// reportComment renders one line per changed decision-grade dimension. Empty when
+// nothing reportable changed (e.g. a transition to pending, or to "" — no decisive
+// review; the forge port never emits "review_required").
 func reportComment(s forge.PRStatus, reviewChanged, ciChanged bool) string {
 	var lines []string
 	if reviewChanged {
