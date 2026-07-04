@@ -93,6 +93,7 @@ func runServe(ctx context.Context, addr string) error {
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
 		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns).
+		WithMaxReworkRounds(cfg.Claude.MaxReworkRounds).
 		WithBase(cfg.Forge.BaseBranch)
 
 	// The queue runs on a context decoupled from the SIGINT signal so a graceful

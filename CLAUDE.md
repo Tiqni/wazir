@@ -149,10 +149,19 @@ authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in the environment (not the
 ## State machine (§3)
 
 Columns = `Status` options: `Inbox` → `Brainstorming` → `Awaiting Answers` (loops back to
-`Brainstorming` on human reply) → `Spec Review` → `Planning` → `Building` → `PR Review` → `Done`, with a
-`Failed` column any phase can drop into on error. The `Phase` constants are camelCase tokens
-(`AwaitingAnswers`, `SpecReview`, `PRReview`); the spaced display names live only in the github impl's
-mapping. Owner alternates human/orchestrator per column — see the transition table in §3.
+`Brainstorming` on human reply) → `Spec Review` → `Planning` → `Building` → `PR Review` → `Reworking`
+→ `Done`, with a `Failed` column any phase can drop into on error. The `Phase` constants are camelCase
+tokens (`AwaitingAnswers`, `SpecReview`, `PRReview`, `Reworking`); the spaced display names live only in
+the github impl's mapping. Owner alternates human/orchestrator per column — see the transition table in §3.
+
+- **PR rework loop (phase 2)** — a human-gated auto-fix: a `Failed → Reworking` column move or a
+  `@wazir fix` PR comment triggers Wazir to re-enter the PR's worktree (recreated from the remote PR
+  head, never reset to base), address the review feedback + fix CI, and re-push (back to `PR Review`,
+  where the observe+report phase re-observes). Capped at `claude.max_rework_rounds` (default 3), then it
+  escalates to `Failed` without spending. **Re-run `wazir provision`/`bootstrap` after upgrading to add
+  the `Reworking` column.** No new webhook subscriptions/App permissions beyond phase 1 — the `@wazir fix`
+  trigger rides the already-subscribed `issue_comment` webhook, and the column-move trigger the
+  `projects_v2_item` webhook.
 
 ## Claude Runner contract (§8.4, §9) — M2, not built
 
