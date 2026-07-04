@@ -65,7 +65,7 @@ returning a **domain** struct — no `go-github` types cross the port:
 
 ```go
 type PRStatus struct {
-    ReviewDecision string   // "approved" | "changes_requested" | "review_required" | ""
+    ReviewDecision string   // "approved" | "changes_requested" | "" (no decisive review)
     CIConclusion   string   // "success" | "failure" | "pending" | ""  ("" = no checks present)
     FailingChecks  []string // names of failed check-runs, for the comment body
     HeadSHA        string   // the commit the checks ran against
@@ -75,7 +75,7 @@ type PRStatus struct {
 The github forge implements it via REST (the client it already holds for `OpenPR`):
 - `pulls/{n}/reviews` → reduce to the **latest** review state per reviewer, then to an
   overall decision (any reviewer's latest = `changes_requested` ⇒ `changes_requested`;
-  else ≥1 `approved` and none requesting changes ⇒ `approved`; else `review_required`/`""`).
+  else ≥1 `approved` and none requesting changes ⇒ `approved`; else `""` (no decisive review)).
 - `commits/{sha}/check-runs` for the PR head SHA → any `completed`+`failure`/`timed_out`/
   `cancelled` ⇒ `failure` (collect names); all `completed`+`success`/`neutral`/`skipped`
   ⇒ `success`; any still in progress ⇒ `pending`; no check-runs ⇒ `""`.
@@ -137,19 +137,21 @@ issue — today's handler would map them to a bogus card ID. Phase 1 adds a guar
      both lines); and if the *current* state has
      `ReviewDecision == "changes_requested"` **or** `CIConclusion == "failure"` →
      `MoveTo(PhaseFailed)`,
-   - persist the new `Last*` state **only after** a successful comment + move.
+   - persist the new `Last*` state **only after** the successful board writes (the
+     comment, and a move when warranted — approved/green stays put and still persists).
 5. **Terminal.** Approved / green → comment only (no move). Once moved to `Failed`,
    later PR events for that card resolve to `ActNone` (it has left `PRReview`) —
    Wazir goes quiet until a human re-engages (phase-2 territory).
 
 ### Report comment content (marker-stamped `<!-- wazir -->`)
 
-- CI failure: `❌ CI failed on <shortSHA>: <name1>, <name2> failing. Moving to Failed.`
-- Changes requested: `🔄 @<reviewer> requested changes. Moving to Failed.`
-- Approved: `✅ @<reviewer> approved.`
-- CI success: `✅ CI passed on <shortSHA>.`
+The comment carries the decision token + failing check names only — no head SHA or
+reviewer `@`-mention, since `PRStatus` doesn't carry reviewer identity:
 
-(The reviewer login is best-effort from `PRStatus`; if unavailable, omit the `@…`.)
+- CI failure: `❌ CI failed: <name1>, <name2>. Moving to Failed.`
+- Changes requested: `🔄 Changes requested. Moving to Failed.`
+- Approved: `✅ PR approved.`
+- CI success: `✅ CI passed.`
 
 ## State & store changes
 
@@ -193,7 +195,7 @@ then posts the "Opened PR" comment and moves to PR Review as today.
   worker's usual "error → `fail()` → move to Failed" path.
 - **Comment/move failures are hard.** `PostComment`/`MoveTo` errors are real board
   I/O — they propagate and `Process` runs the normal `fail()` path. Delta state is
-  persisted **only after** a successful comment + move, so a mid-flight failure
+  persisted **only after** the successful board writes (comment + any move), so a mid-flight failure
   re-reports on retry rather than being silently swallowed.
 - **Loop prevention (existing layers).**
   1. The bot's `MoveTo(Failed)` emits a `projects_v2_item` event → filtered by

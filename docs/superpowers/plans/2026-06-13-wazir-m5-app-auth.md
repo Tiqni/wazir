@@ -6,7 +6,7 @@
 
 **Architecture:** One `ghinstallation.Transport` mints + auto-refreshes the ~1h installation token and feeds both the API `*http.Client` and a git token *source* `func(ctx) (string, error)`. The forge resolves a fresh token at each git network op (so hourly expiry is a non-issue). `serve` eager-mints once at startup to fail loud.
 
-**Tech Stack:** Go 1.24, `github.com/bradleyfalzon/ghinstallation/v2` (new), `github.com/google/go-github/v66`, `github.com/shurcooL/githubv4`, `kkyr/fig`, `os/exec`, `go.uber.org/zap`.
+**Tech Stack:** Go 1.25 (the `go` directive; `ghinstallation/v2` forces the bump from 1.24), `github.com/bradleyfalzon/ghinstallation/v2` (new), `github.com/google/go-github/v66`, `github.com/shurcooL/githubv4`, `kkyr/fig`, `os/exec`, `go.uber.org/zap`.
 
 **Spec:** `docs/superpowers/specs/2026-06-13-wazir-m5-app-auth-design.md`. **Branch:** `m5-app-auth` (already created).
 

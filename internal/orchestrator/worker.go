@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 
@@ -27,9 +28,9 @@ type Worker struct {
 	store              store.Store
 	resolver           Resolver
 	log                *zap.Logger
-	base               string // PR base branch
-	maxBrainstormTurns int    // cap on the clarifying-question loop (M2)
-	maxReworkRounds    int    // cap on rework attempts per card (M6)
+	base               string       // PR base branch
+	maxBrainstormTurns atomic.Int64 // cap on the clarifying-question loop (M2); hot-reloadable
+	maxReworkRounds    int          // cap on rework attempts per card (M6); set once at startup
 }
 
 // NewWorker builds a Worker. A nil logger is replaced with a no-op.
@@ -37,15 +38,15 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main", maxBrainstormTurns: defaultMaxBrainstormTurns, maxReworkRounds: defaultMaxReworkRounds}
+	w := &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main", maxReworkRounds: defaultMaxReworkRounds}
+	w.maxBrainstormTurns.Store(defaultMaxBrainstormTurns)
+	return w
 }
 
 // WithMaxBrainstormTurns overrides the question-loop cap (e.g. from config).
-// A non-positive n is ignored, keeping the default. Returns w for chaining.
+// A non-positive n is ignored. Returns w for chaining.
 func (w *Worker) WithMaxBrainstormTurns(n int) *Worker {
-	if n > 0 {
-		w.maxBrainstormTurns = n
-	}
+	w.SetMaxBrainstormTurns(n)
 	return w
 }
 
@@ -55,6 +56,13 @@ func (w *Worker) WithMaxReworkRounds(n int) *Worker {
 		w.maxReworkRounds = n
 	}
 	return w
+}
+
+// SetMaxBrainstormTurns hot-swaps the question-loop cap (config reload). Ignores n <= 0.
+func (w *Worker) SetMaxBrainstormTurns(n int) {
+	if n > 0 {
+		w.maxBrainstormTurns.Store(int64(n))
+	}
 }
 
 // WithBase overrides the PR base branch (from config). Empty is ignored.
@@ -103,6 +111,17 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		card.Phase = board.PhaseBrainstorming
 		return w.brainstorm(ctx, card)
 	case ActBrainstorm:
+		// Re-brainstorm from Awaiting Answers (a human reply) or Spec Review (a
+		// revision request): move the card back to Brainstorming first so the rework
+		// is visible on the board (§3 loops back to Brainstorming) instead of the
+		// turn running silently in place. A card already in Brainstorming is left put
+		// to avoid a redundant self-move event.
+		if card.Phase != board.PhaseBrainstorming {
+			if err := w.board.MoveTo(ctx, card.ID, board.PhaseBrainstorming); err != nil {
+				return err
+			}
+			card.Phase = board.PhaseBrainstorming
+		}
 		return w.brainstorm(ctx, card)
 	case ActPlan:
 		return w.plan(ctx, card)
@@ -138,8 +157,9 @@ func (w *Worker) brainstorm(ctx context.Context, card board.Card) error {
 	// Cost circuit breaker: once the question loop has hit the cap, escalate to a
 	// human *without* another (paid) model call. Checked before brain.Brainstorm
 	// so the cap actually prevents spend (spec §6: "no further spend").
-	if rec.BrainstormTurns >= w.maxBrainstormTurns {
-		msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", w.maxBrainstormTurns)
+	maxTurns := int(w.maxBrainstormTurns.Load())
+	if rec.BrainstormTurns >= maxTurns {
+		msg := fmt.Sprintf("I've reached the question limit (%d rounds) on this card without a clear spec. It needs a human to decide the direction.", maxTurns)
 		if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
 			return err
 		}
@@ -342,8 +362,9 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 	if healthy {
 		rec.ReworkRounds = 0
 	}
-	// Persist delta state only after the successful board writes above, so a
-	// mid-flight failure re-reports on retry rather than being swallowed.
+	// Persist delta state only after the successful board writes above (the comment,
+	// and a move when one was warranted — approved/green stays put), so a mid-flight
+	// failure re-reports on retry rather than being swallowed.
 	rec.LastReviewState = status.ReviewDecision
 	rec.LastCIConclusion = status.CIConclusion
 	if err := w.store.PutCard(card.ID, rec); err != nil {
@@ -448,8 +469,9 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 	return nil
 }
 
-// reportComment renders one line per changed decision-grade dimension. Empty
-// when nothing reportable changed (e.g. a transition to pending/review_required).
+// reportComment renders one line per changed decision-grade dimension. Empty when
+// nothing reportable changed (e.g. a transition to pending, or to "" — no decisive
+// review; the forge port never emits "review_required").
 func reportComment(s forge.PRStatus, reviewChanged, ciChanged bool) string {
 	var lines []string
 	if reviewChanged {

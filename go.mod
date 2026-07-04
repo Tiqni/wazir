@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
+	github.com/fsnotify/fsnotify v1.10.0
 	github.com/google/go-github/v66 v66.0.0
 	github.com/kkyr/fig v0.5.0
 	github.com/shurcooL/githubv4 v0.0.0-20260209031235-2402fdf4a9ed

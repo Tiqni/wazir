@@ -361,7 +361,7 @@ In `internal/forge/forge.go`, add the struct (above the interface) and the metho
 // PRStatus is the observed review + CI state of a pull request. Values are
 // domain tokens; no provider types cross this port.
 type PRStatus struct {
-	ReviewDecision string   // "approved" | "changes_requested" | "review_required" | ""
+	ReviewDecision string   // "approved" | "changes_requested" | "" (no decisive review)
 	CIConclusion   string   // "success" | "failure" | "pending" | ""  ("" = no checks present)
 	FailingChecks  []string // names of failed check-runs, for the report comment
 	HeadSHA        string   // the commit the checks ran against
@@ -414,7 +414,7 @@ func (f *GitHubForge) PRStatus(ctx context.Context, repo string, prNumber int) (
 // reduceReviewDecision mirrors GitHub's rule: only a reviewer's latest
 // APPROVED / CHANGES_REQUESTED counts (COMMENTED / DISMISSED are ignored).
 // Any latest CHANGES_REQUESTED => changes_requested; else any APPROVED =>
-// approved; else "" (review_required, treated as no decision).
+// approved; else "" (no decisive review — the port never emits "review_required").
 func reduceReviewDecision(reviews []*github.PullRequestReview) string {
 	latest := map[string]string{} // login -> latest decisive state (uppercase)
 	for _, r := range reviews {
@@ -1145,7 +1145,7 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 }
 
 // reportComment renders one line per changed decision-grade dimension. Empty
-// when nothing reportable changed (e.g. a transition to pending/review_required).
+// when nothing reportable changed (e.g. a transition to pending, or to "" — no decisive review).
 func reportComment(s forge.PRStatus, reviewChanged, ciChanged bool) string {
 	var lines []string
 	if reviewChanged {

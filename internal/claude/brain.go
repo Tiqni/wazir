@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -80,11 +81,11 @@ type executeContract struct {
 	Error       string   `json:"error"`
 }
 
-// ClaudeBrain implements orchestrator.Brain via the headless claude CLI.
-type ClaudeBrain struct {
-	runner              *Runner
+// claudeSettings is the hot-reloadable subset of the claude config, swapped
+// atomically so a reload is observed by the next turn without a lock.
+type claudeSettings struct {
 	model               string
-	timeout             time.Duration
+	timeout             time.Duration // brainstorm
 	planTimeout         time.Duration
 	executeTimeout      time.Duration
 	executeAllowedTools []string
@@ -93,18 +94,10 @@ type ClaudeBrain struct {
 	pluginsDir          string
 	pluginID            string
 	settingSources      string
-	log                 *zap.Logger
 }
 
-// New builds a ClaudeBrain from config. A nil logger becomes a no-op.
-// Note: cfg.MaxBrainstormTurns is intentionally not read here — the question-loop
-// cap is a Worker concern, applied via orchestrator Worker.WithMaxBrainstormTurns.
-func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
-	if log == nil {
-		log = zap.NewNop()
-	}
-	return &ClaudeBrain{
-		runner:              &Runner{bin: cfg.Bin, log: log},
+func settingsFrom(cfg config.ClaudeConfig) *claudeSettings {
+	return &claudeSettings{
 		model:               cfg.Model,
 		timeout:             cfg.Timeout,
 		planTimeout:         cfg.PlanTimeout,
@@ -115,9 +108,31 @@ func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 		pluginsDir:          cfg.PluginsDir,
 		pluginID:            cfg.PluginID,
 		settingSources:      cfg.SettingSources,
-		log:                 log,
 	}
 }
+
+// ClaudeBrain implements orchestrator.Brain via the headless claude CLI.
+type ClaudeBrain struct {
+	runner   *Runner // bin is fixed (restart-only)
+	settings atomic.Pointer[claudeSettings]
+	log      *zap.Logger
+}
+
+// New builds a ClaudeBrain from config. A nil logger becomes a no-op.
+// Note: cfg.MaxBrainstormTurns is intentionally not read here — the question-loop
+// cap is a Worker concern, applied via orchestrator Worker.WithMaxBrainstormTurns.
+func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
+	if log == nil {
+		log = zap.NewNop()
+	}
+	b := &ClaudeBrain{runner: &Runner{bin: cfg.Bin, log: log}, log: log}
+	b.settings.Store(settingsFrom(cfg))
+	return b
+}
+
+// Reload swaps the hot-reloadable claude settings (model, timeouts, allowed tools,
+// plugin dir/id, setting sources). The binary path is fixed and not reloaded.
+func (c *ClaudeBrain) Reload(cfg config.ClaudeConfig) { c.settings.Store(settingsFrom(cfg)) }
 
 // splitTools turns the comma-separated allowlist config into argv form, trimming
 // surrounding whitespace and dropping empty entries (so "Read, Edit" yields
@@ -137,16 +152,17 @@ func splitTools(s string) []string {
 // missing/unparseable contract) are returned as a BrainstormFailed result, not a
 // Go error, so the Worker routes them through its normal failure handling.
 func (c *ClaudeBrain) Brainstorm(ctx context.Context, in orchestrator.BrainstormInput) (orchestrator.BrainstormResult, error) {
+	s := c.settings.Load()
 	res, err := c.runner.Run(ctx, RunSpec{
 		Prompt:          in.Transcript,
 		SystemPrompt:    brainstormSystemPrompt,
 		Dir:             in.RepoPath,
-		Model:           c.model,
-		Timeout:         c.timeout,
+		Model:           s.model,
+		Timeout:         s.timeout,
 		PermissionMode:  "default",
 		AllowedTools:    brainstormAllowedTools,
 		DisallowedTools: brainstormDisallowedTools,
-		SettingSources:  c.settingSources,
+		SettingSources:  s.settingSources,
 	})
 	if err != nil {
 		return orchestrator.BrainstormResult{Status: orchestrator.BrainstormFailed, Error: err.Error()}, nil
@@ -189,17 +205,18 @@ func (c *ClaudeBrain) Brainstorm(ctx context.Context, in orchestrator.Brainstorm
 // travel as a StatusFailed result (not a Go error), so the Worker handles them
 // uniformly with its other failure paths.
 func (c *ClaudeBrain) Plan(ctx context.Context, in orchestrator.PlanInput) (orchestrator.PlanResult, error) {
+	s := c.settings.Load()
 	res, err := c.runner.Run(ctx, RunSpec{
 		Prompt:         "Use your writing-plans skill to write an implementation plan for this approved spec in the current repository, saving the plan to a file. Then stop.\n\nApproved spec:\n\n" + in.Spec + "\n\nIssue context:\n\n" + in.Transcript,
 		SystemPrompt:   planSystemPrompt,
 		Dir:            in.WorktreePath,
-		Model:          c.model,
-		Timeout:        c.planTimeout,
+		Model:          s.model,
+		Timeout:        s.planTimeout,
 		AllowedTools:   planAllowedTools,
 		PermissionMode: "acceptEdits",
-		PluginsDir:     c.pluginsDir,
-		EnabledPlugin:  c.pluginID,
-		SettingSources: c.settingSources,
+		PluginsDir:     s.pluginsDir,
+		EnabledPlugin:  s.pluginID,
+		SettingSources: s.settingSources,
 	})
 	if err != nil {
 		return orchestrator.PlanResult{Status: orchestrator.StatusFailed, Error: err.Error()}, nil
@@ -227,17 +244,18 @@ func (c *ClaudeBrain) Plan(ctx context.Context, in orchestrator.PlanInput) (orch
 
 // Execute runs one headless execute-plan turn inside the worktree.
 func (c *ClaudeBrain) Execute(ctx context.Context, in orchestrator.ExecuteInput) (orchestrator.ExecuteResult, error) {
+	s := c.settings.Load()
 	res, err := c.runner.Run(ctx, RunSpec{
 		Prompt:         "Use your executing-plans skill to implement the plan at " + in.PlanPath + ". Run the repository's tests and commit your work on the current branch; do not push or open a PR. Then stop.\n\nIssue context:\n\n" + in.Transcript,
 		SystemPrompt:   executeSystemPrompt,
 		Dir:            in.WorktreePath,
-		Model:          c.model,
-		Timeout:        c.executeTimeout,
-		AllowedTools:   c.executeAllowedTools,
+		Model:          s.model,
+		Timeout:        s.executeTimeout,
+		AllowedTools:   s.executeAllowedTools,
 		PermissionMode: "acceptEdits",
-		PluginsDir:     c.pluginsDir,
-		EnabledPlugin:  c.pluginID,
-		SettingSources: c.settingSources,
+		PluginsDir:     s.pluginsDir,
+		EnabledPlugin:  s.pluginID,
+		SettingSources: s.settingSources,
 	})
 	if err != nil {
 		return orchestrator.ExecuteResult{Status: orchestrator.StatusFailed, Error: err.Error()}, nil
@@ -278,25 +296,26 @@ type reworkContract struct {
 // Rework runs one headless turn that addresses review feedback + failing CI in the
 // PR-head worktree.
 func (c *ClaudeBrain) Rework(ctx context.Context, in orchestrator.ReworkInput) (orchestrator.ReworkResult, error) {
-	timeout := c.reworkTimeout
+	s := c.settings.Load()
+	timeout := s.reworkTimeout
 	if timeout == 0 {
-		timeout = c.executeTimeout
+		timeout = s.executeTimeout
 	}
-	tools := c.reworkAllowedTools
+	tools := s.reworkAllowedTools
 	if len(tools) == 0 {
-		tools = c.executeAllowedTools
+		tools = s.executeAllowedTools
 	}
 	res, err := c.runner.Run(ctx, RunSpec{
 		Prompt:         reworkPrompt(in),
 		SystemPrompt:   reworkSystemPrompt,
 		Dir:            in.WorktreePath,
-		Model:          c.model,
+		Model:          s.model,
 		Timeout:        timeout,
 		AllowedTools:   tools,
 		PermissionMode: "acceptEdits",
-		PluginsDir:     c.pluginsDir,
-		EnabledPlugin:  c.pluginID,
-		SettingSources: c.settingSources,
+		PluginsDir:     s.pluginsDir,
+		EnabledPlugin:  s.pluginID,
+		SettingSources: s.settingSources,
 	})
 	if err != nil {
 		return orchestrator.ReworkResult{Status: orchestrator.StatusFailed, Error: err.Error()}, nil
