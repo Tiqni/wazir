@@ -40,6 +40,10 @@ type ClaudeConfig struct {
 	PluginsDir          string        `fig:"plugins_dir" default:"~/.claude/plugins"`                 // WAZIR_CLAUDE_PLUGINS_DIR — registry symlinked into each plan/execute config dir
 	PluginID            string        `fig:"plugin_id" default:"superpowers@claude-plugins-official"` // WAZIR_CLAUDE_PLUGIN_ID — enabled in the seeded settings.json
 	SettingSources      string        `fig:"setting_sources" default:"user"`                          // WAZIR_CLAUDE_SETTING_SOURCES — excludes a repo's settings.json (spike: "user")
+	MaxReworkRounds     int           `fig:"max_rework_rounds" default:"3"`                           // WAZIR_CLAUDE_MAX_REWORK_ROUNDS — rework cost breaker
+	ReworkCommand       string        `fig:"rework_command" default:"@wazir fix"`                     // WAZIR_CLAUDE_REWORK_COMMAND — PR-comment trigger token
+	ReworkTimeout       time.Duration `fig:"rework_timeout"`                                          // WAZIR_CLAUDE_REWORK_TIMEOUT — 0 => ExecuteTimeout
+	ReworkAllowedTools  string        `fig:"rework_allowed_tools"`                                    // WAZIR_CLAUDE_REWORK_ALLOWED_TOOLS — "" => ExecuteAllowedTools
 }
 
 // ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).
@@ -99,6 +103,7 @@ func Load(path string) (Config, error) {
 	c.Forge.CloneRoot = expandHome(c.Forge.CloneRoot)
 	c.Forge.WorktreeRoot = expandHome(c.Forge.WorktreeRoot)
 	c.Claude.PluginsDir = expandHome(c.Claude.PluginsDir)
+	c.Claude.normalizeRework()
 	if err := c.validate(); err != nil {
 		return Config{}, err
 	}
@@ -121,6 +126,17 @@ func (c Config) validate() error {
 		return fmt.Errorf("project.number must be set and > 0 (got %d)", c.Project.Number)
 	}
 	return nil
+}
+
+// normalizeRework fills the execute-derived rework defaults that a fig struct tag
+// can't express (a tag is a literal, not another field's value).
+func (c *ClaudeConfig) normalizeRework() {
+	if c.ReworkTimeout == 0 {
+		c.ReworkTimeout = c.ExecuteTimeout
+	}
+	if c.ReworkAllowedTools == "" {
+		c.ReworkAllowedTools = c.ExecuteAllowedTools
+	}
 }
 
 // expandHome turns a leading ~ into $HOME. Leaves other paths untouched.
