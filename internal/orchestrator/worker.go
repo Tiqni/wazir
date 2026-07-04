@@ -311,7 +311,19 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 	}
 	reviewChanged := status.ReviewDecision != rec.LastReviewState
 	ciChanged := status.CIConclusion != rec.LastCIConclusion
+	// A genuinely-healthy observation means the last rework (if any) was productive,
+	// so reset the rework budget: the cap (maxReworkRounds) counts CONSECUTIVE
+	// unproductive rounds — a rut never reaches green CI or an approval — not the
+	// lifetime of a PR a human keeps legitimately iterating on. Checked independently
+	// of the report delta so an already-green PR (no state change) still resets.
+	healthy := status.CIConclusion == "success" || status.ReviewDecision == "approved"
 	if !reviewChanged && !ciChanged {
+		if healthy && rec.ReworkRounds != 0 {
+			rec.ReworkRounds = 0
+			if err := w.store.PutCard(card.ID, rec); err != nil {
+				return fmt.Errorf("persist rework reset: %w", err)
+			}
+		}
 		return nil
 	}
 	if comment := reportComment(status, reviewChanged, ciChanged); comment != "" {
@@ -327,15 +339,11 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 			return fmt.Errorf("move to Failed: %w", err)
 		}
 	}
-	// A genuinely-healthy observation means the last rework (if any) was productive,
-	// so reset the rework budget: the cap (maxReworkRounds) counts CONSECUTIVE
-	// unproductive rounds — a rut never reaches green CI or an approval — not the
-	// lifetime of a PR a human keeps legitimately iterating on.
-	if status.CIConclusion == "success" || status.ReviewDecision == "approved" {
+	if healthy {
 		rec.ReworkRounds = 0
 	}
-	// Persist delta state only after a successful comment + move, so a mid-flight
-	// failure re-reports on retry rather than being swallowed.
+	// Persist delta state only after the successful board writes above, so a
+	// mid-flight failure re-reports on retry rather than being swallowed.
 	rec.LastReviewState = status.ReviewDecision
 	rec.LastCIConclusion = status.CIConclusion
 	if err := w.store.PutCard(card.ID, rec); err != nil {
@@ -408,13 +416,15 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 		FailingChecks: failing,
 		Annotations:   annotations,
 	})
-	// A turn ran (or was attempted): count it against the cap regardless of outcome.
+	if err != nil {
+		// The turn didn't produce a result (a Brain-level/transport failure, not a
+		// turn that ran-and-failed) — don't burn a rework round for it.
+		return fmt.Errorf("rework: %w", err)
+	}
+	// A turn ran and produced a result (complete or failed): count it against the cap.
 	rec.ReworkRounds++
 	if putErr := w.store.PutCard(card.ID, rec); putErr != nil {
 		return fmt.Errorf("persist rework round: %w", putErr)
-	}
-	if err != nil {
-		return fmt.Errorf("rework: %w", err)
 	}
 	if res.Status != StatusComplete {
 		if err := w.board.PostComment(ctx, card.ID, "Rework attempt didn't converge: "+res.Error); err != nil {

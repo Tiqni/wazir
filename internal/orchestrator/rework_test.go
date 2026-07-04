@@ -118,6 +118,22 @@ func TestReworkInfraErrorDoesNotIncrement(t *testing.T) {
 	}
 }
 
+func TestReworkBrainErrorDoesNotIncrement(t *testing.T) {
+	// A brain-level error (no result produced) must not burn a rework round.
+	b, st, _, brain, w := reworkSetup(t, 0)
+	brain.err = errors.New("transport blew up")
+
+	_ = w.Process(context.Background(), board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhaseReworking})
+	card, _ := b.GetCard(context.Background(), "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed (brain error -> fail path)", card.Phase)
+	}
+	rec, _, _ := st.GetCard("I1")
+	if rec.ReworkRounds != 0 {
+		t.Errorf("ReworkRounds = %d, want 0 (no result produced)", rec.ReworkRounds)
+	}
+}
+
 func TestReworkPushFailureIncrementsRound(t *testing.T) {
 	// A turn ran (StatusComplete) but the push failed — the round still counts
 	// (spec: "a turn ran → count it") and the card drops to Failed.

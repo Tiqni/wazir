@@ -51,6 +51,27 @@ func TestReportHealthyStateResetsReworkBudget(t *testing.T) {
 	}
 }
 
+func TestReportAlreadyGreenNoDeltaStillResetsBudget(t *testing.T) {
+	// The PR was already green (LastCIConclusion=success) and stays green — no report
+	// delta — but a prior rework burned rounds. The budget must still reset, so a
+	// healthy PR a human iterates on isn't starved by the cap.
+	b, st, _, w := reportSetup(t, forge.PRStatus{CIConclusion: "success"}, nil,
+		store.CardRecord{LastCIConclusion: "success", ReworkRounds: 3})
+	process(t, w, board.EventChecksCompleted)
+
+	card, _ := b.GetCard(context.Background(), "I1")
+	if card.Phase != board.PhasePRReview {
+		t.Errorf("phase = %q, want PRReview", card.Phase)
+	}
+	if len(card.Comments) != 0 {
+		t.Errorf("no report delta -> no comment; got %+v", card.Comments)
+	}
+	rec, _, _ := st.GetCard("I1")
+	if rec.ReworkRounds != 0 {
+		t.Errorf("ReworkRounds = %d, want 0 (already-green still resets)", rec.ReworkRounds)
+	}
+}
+
 func TestReportUnhealthyStateKeepsReworkBudget(t *testing.T) {
 	// Red CI must NOT reset the budget — an unproductive rut keeps counting to the cap.
 	b, st, _, w := reportSetup(t, forge.PRStatus{CIConclusion: "failure", FailingChecks: []string{"lint"}}, nil, store.CardRecord{ReworkRounds: 2})
