@@ -1,50 +1,70 @@
-// Package githubauth produces an authenticated HTTP client for the GitHub
-// REST and GraphQL clients. PAT ships now; GitHub App is scaffolded.
+// Package githubauth produces GitHub App installation auth: an authenticated
+// *http.Client for the REST + GraphQL clients and a token source for git.
+// One ghinstallation.Transport mints and auto-refreshes the ~1h installation
+// token and backs both.
 package githubauth
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	"os"
+
+	"github.com/bradleyfalzon/ghinstallation/v2"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
 )
 
-// ErrAppAuthNotWired is returned for github.auth=app in M0 (delivered later).
-var ErrAppAuthNotWired = errors.New("githubauth: GitHub App auth not wired in M0")
-
-// bearerTransport adds a static "Authorization: Bearer <token>" header to every
-// request. GitHub accepts this for both REST and GraphQL with a PAT. It wraps a
-// base RoundTripper (http.DefaultTransport when nil). This is all we needed from
-// golang.org/x/oauth2's StaticTokenSource, without the dependency.
-type bearerTransport struct {
-	token string
-	base  http.RoundTripper
+// Auth carries the two auth surfaces the daemon needs, both backed by one
+// ghinstallation.Transport so the installation token is minted/refreshed once.
+type Auth struct {
+	HTTPClient *http.Client                              // board REST+GraphQL AND forge REST (PRs)
+	GitToken   func(ctx context.Context) (string, error) // a fresh installation token per git network op
 }
 
-func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// The RoundTripper contract forbids mutating the caller's request, so clone.
-	r := req.Clone(req.Context())
-	r.Header.Set("Authorization", "Bearer "+t.token)
-	base := t.base
-	if base == nil {
-		base = http.DefaultTransport
+// New builds the shared installation transport from the App config.
+func New(ctx context.Context, cfg config.Config) (Auth, error) {
+	keyBytes, err := loadPrivateKey(cfg.GitHub.PrivateKey)
+	if err != nil {
+		return Auth{}, err
 	}
-	return base.RoundTrip(r)
+	tr, err := ghinstallation.New(http.DefaultTransport, cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyBytes)
+	if err != nil {
+		return Auth{}, fmt.Errorf("parse app private key: %w", err)
+	}
+	return Auth{
+		HTTPClient: &http.Client{Transport: tr},
+		GitToken:   tr.Token, // (*ghinstallation.Transport).Token(ctx) (string, error)
+	}, nil
 }
 
-// HTTPClient returns an authenticated *http.Client for the configured mode.
-// Board and forge implementations receive this and never see auth details.
+// HTTPClient is a convenience for API-only callers (provision, card): it returns
+// New(ctx, cfg).HTTPClient.
 func HTTPClient(ctx context.Context, cfg config.Config) (*http.Client, error) {
-	switch cfg.GitHub.Auth {
-	case "pat":
-		return &http.Client{Transport: &bearerTransport{token: cfg.GitHub.PAT}}, nil
-	case "app":
-		// Scaffold: ghinstallation provides its own RoundTripper; wiring lands
-		// when webhooks (M1+) require an App. Compiles, fails loudly.
-		return nil, ErrAppAuthNotWired
-	default:
-		return nil, fmt.Errorf("githubauth: unknown github.auth %q", cfg.GitHub.Auth)
+	a, err := New(ctx, cfg)
+	if err != nil {
+		return nil, err
 	}
+	return a.HTTPClient, nil
+}
+
+// loadPrivateKey resolves the configured private key to PEM bytes, auto-detecting
+// the form: an existing file path is read; a base64-encoded PEM is decoded; any
+// other value is treated as raw PEM bytes. ghinstallation.New validates parseability.
+func loadPrivateKey(v string) ([]byte, error) {
+	if v == "" {
+		return nil, fmt.Errorf("github.private_key is empty (set WAZIR_GITHUB_PRIVATE_KEY)")
+	}
+	if fi, err := os.Stat(v); err == nil {
+		if fi.IsDir() {
+			return nil, fmt.Errorf("github.private_key %q is a directory, not a PEM file", v)
+		}
+		return os.ReadFile(v)
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(v); err == nil && bytes.Contains(decoded, []byte("PRIVATE KEY")) {
+		return decoded, nil
+	}
+	return []byte(v), nil
 }

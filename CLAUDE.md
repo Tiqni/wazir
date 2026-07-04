@@ -16,6 +16,12 @@ plan/execute turns, long-lived-token auth (`CLAUDE_CODE_OAUTH_TOKEN`), and a rep
 (cwd = the card's repo clone). See
 `docs/superpowers/specs/2026-06-07-wazir-m5-execution-isolation-design.md` and
 `docs/superpowers/plans/2026-06-07-wazir-m5-execution-isolation.md`.
+**M5 slice 2 (GitHub App token auth) is in progress** on branch `m5-app-auth`: App installation tokens
+replace the PAT for the board (GraphQL), issues/PRs (REST), and git (clone/fetch/push) via one shared
+`ghinstallation.Transport`; PAT support is removed. Requires an **org-owned** board (an App can't access
+a user-owned Projects v2 board). See
+`docs/superpowers/specs/2026-06-13-wazir-m5-app-auth-design.md` and
+`docs/superpowers/plans/2026-06-13-wazir-m5-app-auth.md`.
 
 Two source-of-truth documents, both worth reading before non-trivial work:
 - **`docs/wazir-init-plan.md`** — the original PRD + technical design + phased plan. Section numbers
@@ -37,8 +43,8 @@ all deterministic GitHub state changes itself. Module: `github.com/EmadMokhtar/w
 
 ## Commands
 
-Go 1.24+ (the `go` directive is `1.24.0` — the floor is `testing.T.Chdir` in the config tests, not a
-dependency; oauth2 was dropped so it no longer forces 1.25). There is
+Go 1.25+ (the `go` directive is `1.25.0` — required by `bradleyfalzon/ghinstallation/v2`, the GitHub
+App auth dependency added in M5 slice 2; it was previously `1.24.0` for `testing.T.Chdir`). There is
 no Makefile or golangci config — `go vet` is the lint.
 
 ```sh
@@ -49,8 +55,8 @@ go test ./internal/board/github/ -run TestMerge    # single test (name is a rege
 go vet ./...
 
 # Opt-in integration test against a REAL Projects v2 board (build tag + env, no file needed):
-WAZIR_GITHUB_PAT=$(gh auth token) WAZIR_GITHUB_OWNER_TYPE=user \
-WAZIR_PROJECT_OWNER=<login> WAZIR_PROJECT_NUMBER=<n> \
+WAZIR_GITHUB_APP_ID=<id> WAZIR_GITHUB_INSTALLATION_ID=<id> WAZIR_GITHUB_PRIVATE_KEY=<path-or-pem> \
+WAZIR_GITHUB_OWNER_TYPE=org WAZIR_PROJECT_OWNER=<org> WAZIR_PROJECT_NUMBER=<n> \
 go test -tags integration ./internal/board/github/ -run TestIntegrationProvision -v
 
 # Run the CLI (cobra):
@@ -114,16 +120,17 @@ These constraints are the whole point of the design. Violating them defeats it.
   cache-write, then the repo is checked against the `repos` allow-list (`ErrRepoNotAllowed`). Repo is
   never global config; one board may hold issues from many repos (§4.1). The write paths
   (`PostComment`/`SetBody`/`GetCard`) go through this; `MoveTo` is board-item-scoped and doesn't.
-- **Auth seam.** `internal/githubauth.HTTPClient` returns an authenticated `*http.Client` shared by the
-  REST + GraphQL clients. PAT ships; GitHub App is scaffolded behind `auth: app` (`ErrAppAuthNotWired`).
+- **Auth seam.** `internal/githubauth.New` builds one `ghinstallation.Transport` and returns an `Auth`
+  bundle: an authenticated `*http.Client` (REST + GraphQL) and a git token source (`func(ctx) (string, error)`)
+  the forge resolves per network op. GitHub App is the only auth mode; PAT was removed in M5 slice 2.
 
 ## Configuration (fig)
 
 `internal/config` loads with **kkyr/fig**: an *optional* nested `wazir.yaml` (sections `github` /
 `project` / `store`, plus top-level `repos`, `bot_login`) with environment overrides named
-`WAZIR_<SECTION>_<FIELD>` — e.g. `WAZIR_GITHUB_PAT`, `WAZIR_GITHUB_OWNER_TYPE`, `WAZIR_PROJECT_NUMBER`.
+`WAZIR_<SECTION>_<FIELD>` — e.g. `WAZIR_GITHUB_APP_ID`, `WAZIR_GITHUB_OWNER_TYPE`, `WAZIR_PROJECT_NUMBER`.
 With no file present, config comes from env + struct `default:` tags (via `fig.IgnoreFile()`). Secrets
-(PAT, webhook secret) come from env, not the committed file. Entry point: `config.Load(path)`;
+(App private key, webhook secret) come from env, not the committed file. Entry point: `config.Load(path)`;
 `--config` sets the path. `wazir.example.yaml` is the template; `/wazir.yaml` is gitignored.
 The `claude` section also carries `plugins_dir` (default `~/.claude/plugins`), `plugin_id` (default
 `superpowers@claude-plugins-official`), and `setting_sources` (default `user`) — env
@@ -182,8 +189,8 @@ Planned but absent: worktree/plan/execute live path (M4); `runs`/cost persistenc
 
 - `google/go-github` (REST: issues, comments, PRs, webhook parse) and `shurcooL/githubv4` (typed
   GraphQL — **required** for Projects v2; REST can't touch v2 cards).
-- PAT auth is a hand-rolled bearer-token `http.RoundTripper` in `internal/githubauth` (no oauth2
-  dependency — it was just setting one header); `bradleyfalzon/ghinstallation` (GitHub App) scaffolded.
+- GitHub App auth via `bradleyfalzon/ghinstallation/v2` in `internal/githubauth` — one transport mints
+  and auto-refreshes the installation token for the REST/GraphQL client and the git token source.
 - `go.etcd.io/bbolt` (store), `spf13/cobra` (CLI), `go.uber.org/zap` (logging), `kkyr/fig` (config).
 
 > Note: this set supersedes the init plan's original §5 suggestions (`caarlos0/env`, `log/slog`,

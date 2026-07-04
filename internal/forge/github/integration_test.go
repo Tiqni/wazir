@@ -5,27 +5,48 @@ package github
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
+
+	"github.com/EmadMokhtar/wazir/internal/config"
+	"github.com/EmadMokhtar/wazir/internal/githubauth"
 )
 
-// TestIntegrationForgeRoundTrip clones a real repo, creates a worktree, makes a
-// trivial commit, pushes, and removes the worktree. Requires:
+// TestIntegrationForgeRoundTrip clones a real repo, creates a worktree, commits,
+// pushes, and removes the worktree, authenticating with a GitHub App installation
+// token. Requires (the App must be installed on the repo's account):
 //
-//	WAZIR_GITHUB_PAT, WAZIR_IT_REPO (owner/name you can push to).
+//	WAZIR_GITHUB_APP_ID, WAZIR_GITHUB_INSTALLATION_ID, WAZIR_GITHUB_PRIVATE_KEY (path or PEM),
+//	WAZIR_IT_REPO (owner/name you can push to).
 //
 // Skips when unset. Run:
 //
-//	WAZIR_GITHUB_PAT=$(gh auth token) WAZIR_IT_REPO=you/scratch \
+//	WAZIR_GITHUB_APP_ID=... WAZIR_GITHUB_INSTALLATION_ID=... WAZIR_GITHUB_PRIVATE_KEY=/path/key.pem \
+//	WAZIR_IT_REPO=you/scratch \
 //	go test -tags integration ./internal/forge/github/ -run TestIntegrationForgeRoundTrip -v
 func TestIntegrationForgeRoundTrip(t *testing.T) {
-	pat := os.Getenv("WAZIR_GITHUB_PAT")
 	repo := os.Getenv("WAZIR_IT_REPO")
-	if pat == "" || repo == "" {
-		t.Skip("set WAZIR_GITHUB_PAT and WAZIR_IT_REPO to run")
+	if os.Getenv("WAZIR_GITHUB_APP_ID") == "" || os.Getenv("WAZIR_GITHUB_INSTALLATION_ID") == "" ||
+		os.Getenv("WAZIR_GITHUB_PRIVATE_KEY") == "" || repo == "" {
+		t.Skip("set WAZIR_GITHUB_APP_ID/INSTALLATION_ID/PRIVATE_KEY and WAZIR_IT_REPO to run")
 	}
 	ctx := context.Background()
+	appID, err := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_APP_ID"), 10, 64)
+	if err != nil {
+		t.Fatalf("WAZIR_GITHUB_APP_ID must be an integer: %v", err)
+	}
+	instID, err := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_INSTALLATION_ID"), 10, 64)
+	if err != nil {
+		t.Fatalf("WAZIR_GITHUB_INSTALLATION_ID must be an integer: %v", err)
+	}
+	auth, err := githubauth.New(ctx, config.Config{GitHub: config.GitHubConfig{
+		AppID: appID, InstallationID: instID, PrivateKey: os.Getenv("WAZIR_GITHUB_PRIVATE_KEY"),
+	}})
+	if err != nil {
+		t.Fatalf("githubauth.New: %v", err)
+	}
 	f := New(nil, Options{
-		GitBin: "git", Base: "main", Token: pat,
+		GitBin: "git", Base: "main", GitToken: auth.GitToken,
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 	})
 	if _, err := f.EnsureClone(ctx, repo); err != nil {

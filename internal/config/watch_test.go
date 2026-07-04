@@ -47,7 +47,7 @@ func TestWatchReloadsOnChangeAndRejectsInvalid(t *testing.T) {
 	clearWazirEnv(t) // file values (incl. project.number=0) must win over ambient WAZIR_*
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wazir.yaml")
-	const valid = "github:\n  auth: pat\n  pat: tok\nproject:\n  owner: octocat\n  number: 1\n"
+	const valid = "github:\n  app_id: 1\n  installation_id: 2\n  private_key: k\nproject:\n  owner: octocat\n  number: 1\n"
 	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWatchReloadsOnChangeAndRejectsInvalid(t *testing.T) {
 	}
 
 	// Invalid edit (number 0) → onError, not onReload.
-	if err := os.WriteFile(path, []byte("github:\n  auth: pat\n  pat: tok\nproject:\n  owner: octocat\n  number: 0\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("github:\n  app_id: 1\n  installation_id: 2\n  private_key: k\nproject:\n  owner: octocat\n  number: 0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	select {

@@ -13,10 +13,10 @@ import (
 	"github.com/EmadMokhtar/wazir/internal/store"
 )
 
-// Run with (env-only config, no file needed):
+// Run with (env-only config, no file needed). The App must be installed on the org:
 //
-//	WAZIR_GITHUB_PAT=$(gh auth token) WAZIR_GITHUB_OWNER_TYPE=user \
-//	WAZIR_PROJECT_OWNER=you WAZIR_PROJECT_NUMBER=NN \
+//	WAZIR_GITHUB_APP_ID=... WAZIR_GITHUB_INSTALLATION_ID=... WAZIR_GITHUB_PRIVATE_KEY=/path/key.pem \
+//	WAZIR_GITHUB_OWNER_TYPE=org WAZIR_PROJECT_OWNER=your-org WAZIR_PROJECT_NUMBER=NN \
 //	go test -tags integration ./internal/board/github/ -run TestIntegrationProvision -v
 func TestIntegrationProvision(t *testing.T) {
 	if os.Getenv("WAZIR_PROJECT_NUMBER") == "" {

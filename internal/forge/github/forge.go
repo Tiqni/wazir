@@ -19,8 +19,8 @@ type Options struct {
 	CloneRoot    string
 	WorktreeRoot string
 	Base         string
-	Token        string                   // PAT; injected as http.extraHeader (never persisted)
-	RemoteURL    func(repo string) string // optional; defaults to https://github.com/<repo>.git
+	GitToken     func(ctx context.Context) (string, error) // installation token per network op; nil = no auth header
+	RemoteURL    func(repo string) string                  // optional; defaults to https://github.com/<repo>.git
 }
 
 // GitHubForge implements forge.CodeForge.
@@ -46,7 +46,7 @@ func New(rest *github.Client, opts Options) *GitHubForge {
 	}
 	return &GitHubForge{
 		rest:         rest,
-		git:          gitRunner{bin: opts.GitBin, token: opts.Token},
+		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken},
 		cloneRoot:    opts.CloneRoot,
 		worktreeRoot: opts.WorktreeRoot,
 		base:         opts.Base,
@@ -155,7 +155,7 @@ func (f *GitHubForge) PushBranch(ctx context.Context, repo, branch string) error
 // resetOrigin points the clone's origin remote at the canonical URL before any
 // authenticated network op. A worktree's execute turn has git access and shares
 // this clone's config, so a tampered origin could otherwise redirect the
-// PAT-bearing request (http.extraHeader) to another host — an exfiltration vector
+// token-bearing request (http.extraHeader) to another host — an exfiltration vector
 // under the §12 prompt-injection threat model. It's a local op (no auth).
 func (f *GitHubForge) resetOrigin(ctx context.Context, clone, repo string) error {
 	if _, err := f.git.run(ctx, clone, false, "remote", "set-url", "origin", f.remoteURL(repo)); err != nil {

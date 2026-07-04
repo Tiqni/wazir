@@ -38,7 +38,7 @@ func seedBareOrigin(t *testing.T) string {
 func newTestForge(t *testing.T, origin string) *GitHubForge {
 	t.Helper()
 	return New(nil, Options{
-		GitBin: "git", Base: "main", Token: "",
+		GitBin: "git", Base: "main",
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 		RemoteURL: func(repo string) string { return origin },
 	})
@@ -101,9 +101,10 @@ func TestForgeCloneDoesNotPersistToken(t *testing.T) {
 	}
 	ctx := context.Background()
 	origin := seedBareOrigin(t)
-	const secret = "super-secret-pat-DO-NOT-LEAK"
+	const secret = "super-secret-token-DO-NOT-LEAK"
 	f := New(nil, Options{
-		GitBin: "git", Base: "main", Token: secret,
+		GitBin: "git", Base: "main",
+		GitToken:  func(context.Context) (string, error) { return secret, nil },
 		CloneRoot: t.TempDir(), WorktreeRoot: t.TempDir(),
 		RemoteURL: func(repo string) string { return origin },
 	})
@@ -120,13 +121,13 @@ func TestForgeCloneDoesNotPersistToken(t *testing.T) {
 		t.Fatalf("read .git/config: %v", err)
 	}
 	if strings.Contains(string(cfg), secret) {
-		t.Errorf("PAT leaked into .git/config:\n%s", cfg)
+		t.Errorf("token leaked into .git/config:\n%s", cfg)
 	}
 }
 
 // A push must reset origin to the canonical URL first, so a tampered origin (as a
 // malicious execute turn with git access could set) cannot redirect the
-// PAT-bearing request to another host.
+// token-bearing request to another host.
 func TestForgePushResetsTamperedOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
