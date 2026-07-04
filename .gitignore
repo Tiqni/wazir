@@ -18,6 +18,7 @@ coverage.out
 
 # Local runtime state (clones, worktrees, sqlite store)
 *.db
+*.bak
 *.sqlite
 *.sqlite3
 /worktrees/
