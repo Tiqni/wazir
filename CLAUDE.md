@@ -64,6 +64,7 @@ go run ./cmd/wazir provision     # create board (if absent) + reconcile columns;
 go run ./cmd/wazir bootstrap     # reconcile + cache an existing board; never creates
 go run ./cmd/wazir card move    <issue-node-id> <Phase>
 go run ./cmd/wazir card comment <issue-node-id> "<text>"
+go run ./cmd/wazir card link-pr <issue-node-id> <pr-number>  # backfill PRNumber + PR-index for a PR opened before PR-watch (stop `serve` first — store lock)
 # persistent flags: --config <path>, --log-level debug|info|warn|error, --log-format console|json
 ```
 
