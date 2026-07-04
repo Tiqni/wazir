@@ -13,6 +13,7 @@ var columnNames = map[board.Phase]string{
 	board.PhasePlanning:        "Planning",
 	board.PhaseBuilding:        "Building",
 	board.PhasePRReview:        "PR Review",
+	board.PhaseReworking:       "Reworking",
 	board.PhaseDone:            "Done",
 	board.PhaseFailed:          "Failed",
 }
@@ -26,6 +27,7 @@ var optionColors = map[board.Phase]string{
 	board.PhasePlanning:        "ORANGE",
 	board.PhaseBuilding:        "PINK",
 	board.PhasePRReview:        "GREEN",
+	board.PhaseReworking:       "PINK",
 	board.PhaseDone:            "GREEN",
 	board.PhaseFailed:          "RED",
 }

@@ -9,7 +9,7 @@ import (
 func TestPruneDropsExtrasAndCanonicalOrder(t *testing.T) {
 	// A board provisioned additively: defaults first, then Wazir columns out of
 	// canonical order (Done sits early). Prune should drop Todo/In Progress and
-	// emit exactly Wazir's 9 in canonical order.
+	// emit exactly Wazir's 10 in canonical order.
 	existing := []statusOption{
 		{ID: "o-todo", Name: "Todo", Color: "GRAY"},
 		{ID: "o-inprog", Name: "In Progress", Color: "YELLOW"},
@@ -39,7 +39,7 @@ func TestPruneDropsExtrasAndCanonicalOrder(t *testing.T) {
 
 	// merged is exactly Wazir's columns in canonical order.
 	want := []string{"Inbox", "Brainstorming", "Awaiting Answers", "Spec Review",
-		"Planning", "Building", "PR Review", "Done", "Failed"}
+		"Planning", "Building", "PR Review", "Reworking", "Done", "Failed"}
 	got := optionNames(merged)
 	if len(got) != len(want) {
 		t.Fatalf("merged names = %v, want %v", got, want)

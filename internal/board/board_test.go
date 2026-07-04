@@ -6,7 +6,7 @@ func TestAllPhasesOrderedAndComplete(t *testing.T) {
 	got := AllPhases()
 	want := []Phase{
 		PhaseInbox, PhaseBrainstorming, PhaseAwaitingAnswers, PhaseSpecReview,
-		PhasePlanning, PhaseBuilding, PhasePRReview, PhaseDone, PhaseFailed,
+		PhasePlanning, PhaseBuilding, PhasePRReview, PhaseReworking, PhaseDone, PhaseFailed,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("AllPhases len = %d, want %d", len(got), len(want))

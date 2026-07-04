@@ -19,6 +19,7 @@ const (
 	PhasePlanning        Phase = "Planning"
 	PhaseBuilding        Phase = "Building"
 	PhasePRReview        Phase = "PRReview"
+	PhaseReworking       Phase = "Reworking"
 	PhaseDone            Phase = "Done"
 	PhaseFailed          Phase = "Failed"
 )
@@ -27,7 +28,7 @@ const (
 func AllPhases() []Phase {
 	return []Phase{
 		PhaseInbox, PhaseBrainstorming, PhaseAwaitingAnswers, PhaseSpecReview,
-		PhasePlanning, PhaseBuilding, PhasePRReview, PhaseDone, PhaseFailed,
+		PhasePlanning, PhaseBuilding, PhasePRReview, PhaseReworking, PhaseDone, PhaseFailed,
 	}
 }
 
@@ -78,8 +79,9 @@ const (
 	EventCommentAdded
 	EventPhaseChanged
 	EventApprovalGiven
-	EventReviewSubmitted // M5: a decision-grade PR review (approved | changes_requested) was submitted
-	EventChecksCompleted // M5: a PR's check suite completed
+	EventReviewSubmitted  // M5: a decision-grade PR review (approved | changes_requested) was submitted
+	EventChecksCompleted  // M5: a PR's check suite completed
+	EventReworkRequested  // M6: a human asked Wazir to rework the PR (via a `@wazir fix` command)
 )
 
 // Event is a provider webhook normalized to domain vocabulary.
