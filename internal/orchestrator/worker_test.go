@@ -18,6 +18,7 @@ type scriptedBrain struct {
 	brainstorm []BrainstormResult
 	plan       []PlanResult
 	execute    []ExecuteResult
+	rework     []ReworkResult
 	err        error
 
 	brainstormCalls        int    // how many times Brainstorm was invoked
@@ -50,6 +51,14 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 	}
 	r := s.execute[0]
 	s.execute = s.execute[1:]
+	return r, nil
+}
+func (s *scriptedBrain) Rework(ctx context.Context, in ReworkInput) (ReworkResult, error) {
+	if s.err != nil {
+		return ReworkResult{}, s.err
+	}
+	r := s.rework[0]
+	s.rework = s.rework[1:]
 	return r, nil
 }
 

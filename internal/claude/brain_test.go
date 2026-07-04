@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
+	"github.com/EmadMokhtar/wazir/internal/forge"
 	"github.com/EmadMokhtar/wazir/internal/orchestrator"
 )
 
@@ -263,6 +264,76 @@ func TestPlanAndExecuteSeedPluginAndUseSkill(t *testing.T) {
 	}
 	if !strings.Contains(string(execArgs), "executing-plans") {
 		t.Errorf("execute prompt must name the executing-plans skill; args:\n%s", execArgs)
+	}
+}
+
+func TestReworkComplete(t *testing.T) {
+	result := "```json\n{\"phase\":\"rework\",\"status\":\"complete\",\"commits\":[\"def\"],\"test_summary\":\"ok\",\"notes\":\"fixed lint\",\"error\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second,
+		ReworkTimeout: 5 * time.Second, ReworkAllowedTools: "Read,Edit,Write,Bash(git:*)"}, zap.NewNop())
+	wt := t.TempDir()
+	res, err := br.Rework(context.Background(), orchestrator.ReworkInput{
+		Transcript:    "t",
+		WorktreePath:  wt,
+		Feedback:      forge.ReviewFeedback{Summary: "wrap the error", Comments: []forge.InlineComment{{Path: "main.go", Line: 42, Body: "here"}}},
+		FailingChecks: []string{"lint"},
+		Annotations:   []forge.CheckAnnotation{{Check: "lint", Path: "main.go", Line: 10, Level: "failure", Message: "undefined: foo"}},
+	})
+	if err != nil {
+		t.Fatalf("Rework: %v", err)
+	}
+	if res.Status != orchestrator.StatusComplete {
+		t.Errorf("res = %+v", res)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "wrap the error") || !strings.Contains(string(args), "undefined: foo") {
+		t.Errorf("rework prompt must carry feedback + annotations; args:\n%s", args)
+	}
+	if !strings.Contains(string(args), "Bash(git:*)") {
+		t.Errorf("rework must carry the configured allowlist; args:\n%s", args)
+	}
+	if res.Notes != "fixed lint" {
+		t.Errorf("Notes = %q, want fixed lint", res.Notes)
+	}
+}
+
+func TestReworkFailsOnCLIError(t *testing.T) {
+	bin := writeFakeClaude(t, "", 1, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second}, zap.NewNop())
+	res, err := br.Rework(context.Background(), orchestrator.ReworkInput{WorktreePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Rework should report failure via result, not error: %v", err)
+	}
+	if res.Status != orchestrator.StatusFailed {
+		t.Errorf("CLI error must fail closed, got %+v", res)
+	}
+}
+
+func TestReworkFailsOnWrongPhase(t *testing.T) {
+	// Valid status but the contract's phase is "execute" — must fail closed.
+	result := "```json\n{\"phase\":\"execute\",\"status\":\"complete\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second}, zap.NewNop())
+	res, err := br.Rework(context.Background(), orchestrator.ReworkInput{WorktreePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Rework should report failure via result, not error: %v", err)
+	}
+	if res.Status != orchestrator.StatusFailed || res.Error == "" {
+		t.Errorf("wrong phase must fail closed, got %+v", res)
+	}
+}
+
+func TestReworkFailedStatusCarriesError(t *testing.T) {
+	result := "```json\n{\"phase\":\"rework\",\"status\":\"failed\",\"error\":\"tests still red\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second}, zap.NewNop())
+	res, err := br.Rework(context.Background(), orchestrator.ReworkInput{WorktreePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Rework: %v", err)
+	}
+	if res.Status != orchestrator.StatusFailed || res.Error != "tests still red" {
+		t.Errorf("failed status must surface the error, got %+v", res)
 	}
 }
 

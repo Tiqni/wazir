@@ -22,4 +22,8 @@ func (CannedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteResult,
 	return ExecuteResult{Status: StatusComplete, Branch: "wazir/placeholder", TestSummary: "n/a"}, nil
 }
 
+func (CannedBrain) Rework(ctx context.Context, in ReworkInput) (ReworkResult, error) {
+	return ReworkResult{Status: StatusComplete, Notes: "canned rework"}, nil
+}
+
 var _ Brain = CannedBrain{}
