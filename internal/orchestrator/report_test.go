@@ -35,6 +35,37 @@ func process(t *testing.T, w *Worker, kind board.EventKind) {
 	}
 }
 
+func TestReportHealthyStateResetsReworkBudget(t *testing.T) {
+	// A card that has burned rework rounds but now observes green CI: the rework
+	// budget resets, so a future legitimate review round isn't starved by the cap.
+	b, st, _, w := reportSetup(t, forge.PRStatus{CIConclusion: "success"}, nil, store.CardRecord{ReworkRounds: 3})
+	process(t, w, board.EventChecksCompleted)
+
+	card, _ := b.GetCard(context.Background(), "I1")
+	if card.Phase != board.PhasePRReview {
+		t.Errorf("phase = %q, want PRReview (green CI is informational)", card.Phase)
+	}
+	rec, _, _ := st.GetCard("I1")
+	if rec.ReworkRounds != 0 {
+		t.Errorf("ReworkRounds = %d, want 0 (green CI resets the rework budget)", rec.ReworkRounds)
+	}
+}
+
+func TestReportUnhealthyStateKeepsReworkBudget(t *testing.T) {
+	// Red CI must NOT reset the budget — an unproductive rut keeps counting to the cap.
+	b, st, _, w := reportSetup(t, forge.PRStatus{CIConclusion: "failure", FailingChecks: []string{"lint"}}, nil, store.CardRecord{ReworkRounds: 2})
+	process(t, w, board.EventChecksCompleted)
+
+	card, _ := b.GetCard(context.Background(), "I1")
+	if card.Phase != board.PhaseFailed {
+		t.Errorf("phase = %q, want Failed", card.Phase)
+	}
+	rec, _, _ := st.GetCard("I1")
+	if rec.ReworkRounds != 2 {
+		t.Errorf("ReworkRounds = %d, want 2 (red CI must not reset the budget)", rec.ReworkRounds)
+	}
+}
+
 func TestReportChangesRequestedMovesToFailed(t *testing.T) {
 	b, st, _, w := reportSetup(t, forge.PRStatus{ReviewDecision: "changes_requested"}, nil, store.CardRecord{})
 	process(t, w, board.EventReviewSubmitted)

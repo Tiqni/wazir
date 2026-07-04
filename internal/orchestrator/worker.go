@@ -327,6 +327,13 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 			return fmt.Errorf("move to Failed: %w", err)
 		}
 	}
+	// A genuinely-healthy observation means the last rework (if any) was productive,
+	// so reset the rework budget: the cap (maxReworkRounds) counts CONSECUTIVE
+	// unproductive rounds — a rut never reaches green CI or an approval — not the
+	// lifetime of a PR a human keeps legitimately iterating on.
+	if status.CIConclusion == "success" || status.ReviewDecision == "approved" {
+		rec.ReworkRounds = 0
+	}
 	// Persist delta state only after a successful comment + move, so a mid-flight
 	// failure re-reports on retry rather than being swallowed.
 	rec.LastReviewState = status.ReviewDecision
@@ -345,7 +352,12 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 		return fmt.Errorf("read card record %s: %w", card.ID, err)
 	}
 	if !ok || rec.PRNumber == 0 || rec.Branch == "" {
+		// Fail closed: a card with no opened PR (e.g. dragged straight into Reworking)
+		// has nothing to rework. Explain the bounce rather than silently Failing it.
 		w.log.Warn("rework skipped: no PR/branch for card", zap.String("card", card.ID))
+		if err := w.board.PostComment(ctx, card.ID, "There's no open PR for this card yet, so there's nothing to rework."); err != nil {
+			return err
+		}
 		return w.board.MoveTo(ctx, card.ID, board.PhaseFailed)
 	}
 	// Cost breaker: at the cap, escalate without spending a (paid) turn.
@@ -382,6 +394,9 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 	if err != nil {
 		return fmt.Errorf("check annotations: %w", err)
 	}
+	// Failing-check names are best-effort context: a PRStatus error just omits them
+	// (the annotations above already carry the actionable failure detail), so it
+	// must not burn a rework round by failing the turn.
 	var failing []string
 	if status, err := w.forge.PRStatus(ctx, card.Repo, rec.PRNumber); err == nil {
 		failing = status.FailingChecks

@@ -158,7 +158,9 @@ the github impl's mapping. Owner alternates human/orchestrator per column — se
   `@wazir fix` PR comment triggers Wazir to re-enter the PR's worktree (recreated from the remote PR
   head, never reset to base), address the review feedback + fix CI, and re-push (back to `PR Review`,
   where the observe+report phase re-observes). Capped at `claude.max_rework_rounds` (default 3), then it
-  escalates to `Failed` without spending. **Re-run `wazir provision`/`bootstrap` after upgrading to add
+  escalates to `Failed` without spending; the counter resets whenever the PR next reaches green CI or an
+  approval, so the cap bounds *consecutive unproductive* rounds, not healthy human iteration.
+  **Re-run `wazir provision`/`bootstrap` after upgrading to add
   the `Reworking` column.** No new webhook subscriptions/App permissions beyond phase 1 — the `@wazir fix`
   trigger rides the already-subscribed `issue_comment` webhook, and the column-move trigger the
   `projects_v2_item` webhook.
