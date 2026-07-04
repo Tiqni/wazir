@@ -33,6 +33,7 @@ type GitHubBoard struct {
 	projectNumber int
 	boardName     string
 	botLogin      string
+	reworkCommand string // phase-2 PR-comment trigger token (e.g. "@wazir fix")
 	webhookSecret string
 	projectNodeID string
 	repos         []string // allow-list ("owner/name")

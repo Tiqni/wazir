@@ -235,3 +235,79 @@ func TestParseIssueCommentOnPRIgnored(t *testing.T) {
 		t.Errorf("Kind = %v, want EventIgnore (comment on a PR, not the card issue)", ev.Kind)
 	}
 }
+
+func TestParsePRCommentReworkCommand(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	payload := loadFixture(t, "issue_comment_pr_fix.json")
+	h := headersFor("issue_comment", "d-fix", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Errorf("Kind = %v, want EventReworkRequested", ev.Kind)
+	}
+	if ev.CardID != "ISSUE_NODE_1" || ev.Repo != "octocat/hello" || ev.Dedup != "d-fix" {
+		t.Errorf("event = %+v", ev)
+	}
+}
+
+func TestParsePREditedCommandIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// An EDITED comment carrying the command must not re-fire a rework.
+	payload := []byte(`{"action":"edited","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":558,"body":"@wazir fix","user":{"login":"alice"}},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-fix4", sign([]byte("shh"), payload))
+
+	ev, _ := b.ParseEvent(h, payload)
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (edited comment must not trigger rework)", ev.Kind)
+	}
+}
+
+func TestParsePRCommentWithoutCommandIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	payload := loadFixture(t, "issue_comment_on_pr.json") // PR comment, no command
+	h := headersFor("issue_comment", "d-nofix", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (PR comment without the command)", ev.Kind)
+	}
+}
+
+func TestParsePRCommentReworkCommandCaseInsensitive(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":556,"body":"@WAZIR FIX","user":{"login":"alice"}},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-fix2", sign([]byte("shh"), payload))
+
+	ev, _ := b.ParseEvent(h, payload)
+	if ev.Kind != board.EventReworkRequested {
+		t.Errorf("Kind = %v, want EventReworkRequested (case-insensitive)", ev.Kind)
+	}
+}
+
+func TestParsePRCommentReworkFromBotIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":557,"body":"@wazir fix","user":{"login":"wazir-bot"}},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"wazir-bot"}}`)
+	h := headersFor("issue_comment", "d-fix3", sign([]byte("shh"), payload))
+
+	ev, _ := b.ParseEvent(h, payload)
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (bot can't trigger itself)", ev.Kind)
+	}
+}

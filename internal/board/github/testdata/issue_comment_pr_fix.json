@@ -1,0 +1,7 @@
+{
+  "action": "created",
+  "issue": { "node_id": "PR_NODE_1", "pull_request": { "url": "https://api.github.com/repos/octocat/hello/pulls/9" } },
+  "comment": { "id": 555, "body": "looks close — @wazir fix the lint please", "user": { "login": "alice" } },
+  "repository": { "full_name": "octocat/hello" },
+  "sender": { "login": "alice" }
+}

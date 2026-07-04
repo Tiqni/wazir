@@ -21,6 +21,7 @@ func New(httpClient *http.Client, cfg config.Config, st store.Store) *GitHubBoar
 		projectNumber: cfg.Project.Number,
 		boardName:     cfg.Project.BoardName,
 		botLogin:      cfg.BotLogin,
+		reworkCommand: cfg.Claude.ReworkCommand,
 		repos:         cfg.Repos,
 		webhookSecret: cfg.GitHub.WebhookSecret,
 	}
