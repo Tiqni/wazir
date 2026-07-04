@@ -559,8 +559,13 @@ type recordingBoard struct {
 }
 
 func (r *recordingBoard) MoveTo(ctx context.Context, cardID string, phase board.Phase) error {
+	// Record the move only after the underlying board accepts it, so a failed
+	// MoveTo isn't misrecorded as having happened.
+	if err := r.Board.MoveTo(ctx, cardID, phase); err != nil {
+		return err
+	}
 	r.moves = append(r.moves, phase)
-	return r.Board.MoveTo(ctx, cardID, phase)
+	return nil
 }
 
 // A revision request (human comment) on a Spec Review card must visibly loop the
@@ -569,7 +574,11 @@ func (r *recordingBoard) MoveTo(ctx context.Context, cardID string, phase board.
 func TestWorkerSpecReviewRevisionMovesBackToBrainstorming(t *testing.T) {
 	ctx := context.Background()
 	mb := memboard.New()
-	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseSpecReview})
+	// Seed the human comment ON the card too — the worker builds the brainstorm
+	// transcript from GetCard()'s card.Comments, so it must be present there, not
+	// only on the event.
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseSpecReview,
+		Comments: []board.Comment{{ID: "c1", Author: "human", Body: "please revise X"}}})
 	rb := &recordingBoard{Board: mb}
 	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
 	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
@@ -595,7 +604,10 @@ func TestWorkerSpecReviewRevisionMovesBackToBrainstorming(t *testing.T) {
 func TestWorkerAwaitingAnswersReplyMovesBackToBrainstorming(t *testing.T) {
 	ctx := context.Background()
 	mb := memboard.New()
-	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseAwaitingAnswers})
+	// Seed the reply comment ON the card too — the brainstorm transcript is built
+	// from GetCard()'s card.Comments, so the reply must be present there.
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseAwaitingAnswers,
+		Comments: []board.Comment{{ID: "c1", Author: "human", Body: "here are the answers"}}})
 	rb := &recordingBoard{Board: mb}
 	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
 	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
