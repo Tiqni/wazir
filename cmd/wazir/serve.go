@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,6 +40,31 @@ func newServeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "HTTP listen address for webhooks")
 	return cmd
+}
+
+// restartOnlyChanged reports which restart-only config groups differ between two
+// loads (auth/board/store/forge/claude.bin), so a reload can warn that they were
+// ignored. Returns "" when nothing restart-only changed.
+func restartOnlyChanged(oldCfg, newCfg config.Config) string {
+	var changed []string
+	og, ng := oldCfg.GitHub, newCfg.GitHub
+	og.WebhookSecret, ng.WebhookSecret = "", "" // hot-reloaded; exclude from the compare
+	if og != ng {
+		changed = append(changed, "github")
+	}
+	if oldCfg.Project != newCfg.Project {
+		changed = append(changed, "project")
+	}
+	if oldCfg.Store != newCfg.Store {
+		changed = append(changed, "store")
+	}
+	if oldCfg.Forge != newCfg.Forge {
+		changed = append(changed, "forge")
+	}
+	if oldCfg.Claude.Bin != newCfg.Claude.Bin {
+		changed = append(changed, "claude.bin")
+	}
+	return strings.Join(changed, ", ")
 }
 
 // runServe wires the GitHub board + forge, the real claude brain, the queue,
@@ -94,6 +120,43 @@ func runServe(ctx context.Context, addr string) error {
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
 		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns).
 		WithBase(cfg.Forge.BaseBranch)
+
+	// Live config reload: re-read wazir.yaml on change and hot-swap the safe
+	// subset (claude.*, repos, bot_login, webhook_secret). Restart-only fields are
+	// ignored with a warning. Disabled for an env-only run (no file to watch).
+	if path, ok := config.ResolvePath(flagConfig); ok {
+		// startCfg is the config the process actually applied at startup; it stays
+		// fixed so restart-only fields are always compared against what's really
+		// running, not against whatever the file last said. (Advancing it would
+		// falsely warn when a restart-only field is reverted back to the running
+		// value.) lastRestartDiff de-dups the warning so a standing divergence is
+		// logged once, not on every reload. Both are touched only on the single
+		// Watch goroutine — no data race.
+		startCfg := cfg
+		var lastRestartDiff string
+		go func() {
+			err := config.Watch(ctx, path,
+				func(newCfg config.Config) {
+					if d := restartOnlyChanged(startCfg, newCfg); d != lastRestartDiff {
+						if d != "" {
+							logger.Warn("config change requires a restart; ignored", zap.String("fields", d))
+						}
+						lastRestartDiff = d
+					}
+					brain.Reload(newCfg.Claude)
+					b.Reload(newCfg.Repos, newCfg.BotLogin, newCfg.GitHub.WebhookSecret)
+					worker.SetMaxBrainstormTurns(newCfg.Claude.MaxBrainstormTurns)
+					logger.Info("config reloaded")
+				},
+				func(err error) { logger.Warn("config reload failed; keeping current config", zap.Error(err)) },
+			)
+			if err != nil {
+				logger.Warn("live config reload disabled (watcher error)", zap.Error(err))
+			}
+		}()
+	} else {
+		logger.Info("live config reload disabled (no config file; env-only)")
+	}
 
 	// The queue runs on a context decoupled from the SIGINT signal so a graceful
 	// drain lets in-flight claude turns finish (bounded by the per-turn timeout)

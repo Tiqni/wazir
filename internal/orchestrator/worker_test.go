@@ -525,6 +525,29 @@ func TestWorkerBuildingReentryWithoutWorktreeFailsFast(t *testing.T) {
 	}
 }
 
+func TestWorkerSetMaxBrainstormTurnsLive(t *testing.T) {
+	ctx := context.Background()
+	b := memboard.New()
+	b.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	st := store.NewMemory()
+	st.PutCard("I1", store.CardRecord{Repo: "o/r", BrainstormTurns: 2})
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	ff := &fakeForge{clonePath: "/clone/o-r"}
+	w := NewWorker(b, ff, brain, st, nil) // default cap 8 → 2 turns is under it
+
+	// Lower the cap live to 2; the card (2 turns) is now at the cap → escalate, no brain call, no clone.
+	w.SetMaxBrainstormTurns(2)
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1"}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if brain.brainstormCalls != 0 {
+		t.Errorf("brain ran %d times; the live-lowered cap should escalate without a turn", brain.brainstormCalls)
+	}
+	if slices.Contains(ff.calls, "ensureClone") {
+		t.Errorf("escalation must not clone; calls=%v", ff.calls)
+	}
+}
+
 // A forge that returns an empty worktree path (no error) must fail closed rather
 // than run plan/execute in the daemon's cwd outside any worktree.
 func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {
@@ -547,5 +570,99 @@ func TestWorkerPlanEmptyWorktreePathFailsClosed(t *testing.T) {
 	// The plan brain must not have run (guard fires before brain.Plan).
 	if !slices.Contains(ff.calls, "createWorktree") || slices.Contains(ff.calls, "push") {
 		t.Errorf("expected createWorktree then a stop before push, got %v", ff.calls)
+	}
+}
+
+// recordingBoard wraps the in-memory board to capture the ordered MoveTo phases,
+// so tests can assert intermediate transitions (memboard keeps only the current
+// phase). MoveTo records then delegates so GetCard still reflects the move.
+type recordingBoard struct {
+	*memboard.Board
+	moves []board.Phase
+}
+
+func (r *recordingBoard) MoveTo(ctx context.Context, cardID string, phase board.Phase) error {
+	// Record the move only after the underlying board accepts it, so a failed
+	// MoveTo isn't misrecorded as having happened.
+	if err := r.Board.MoveTo(ctx, cardID, phase); err != nil {
+		return err
+	}
+	r.moves = append(r.moves, phase)
+	return nil
+}
+
+// A revision request (human comment) on a Spec Review card must visibly loop the
+// card back to Brainstorming before reworking — not silently re-brainstorm in
+// place (§3: "Spec Review → changes requested → Brainstorming").
+func TestWorkerSpecReviewRevisionMovesBackToBrainstorming(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	// Seed the human comment ON the card too — the worker builds the brainstorm
+	// transcript from GetCard()'s card.Comments, so it must be present there, not
+	// only on the event.
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseSpecReview,
+		Comments: []board.Comment{{ID: "c1", Author: "human", Body: "please revise X"}}})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	ev := board.Event{Kind: board.EventCommentAdded, CardID: "I1",
+		Comment: &board.Comment{ID: "c1", Author: "human", Body: "please revise X"}}
+	if err := w.Process(ctx, ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(rb.moves) == 0 || rb.moves[0] != board.PhaseBrainstorming {
+		t.Errorf("first move = %v, want Brainstorming (visible rework)", rb.moves)
+	}
+	if brain.brainstormCalls != 1 {
+		t.Errorf("brain ran %d times, want 1", brain.brainstormCalls)
+	}
+	if card, _ := mb.GetCard(ctx, "I1"); card.Phase != board.PhaseAwaitingAnswers {
+		t.Errorf("final phase = %q, want AwaitingAnswers", card.Phase)
+	}
+}
+
+// A human reply on an Awaiting Answers card likewise loops back to Brainstorming
+// before the next turn (§3: "Awaiting Answers loops back to Brainstorming on reply").
+func TestWorkerAwaitingAnswersReplyMovesBackToBrainstorming(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	// Seed the reply comment ON the card too — the brainstorm transcript is built
+	// from GetCard()'s card.Comments, so the reply must be present there.
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseAwaitingAnswers,
+		Comments: []board.Comment{{ID: "c1", Author: "human", Body: "here are the answers"}}})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: SpecReady, SpecMarkdown: "SPEC"}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	ev := board.Event{Kind: board.EventCommentAdded, CardID: "I1",
+		Comment: &board.Comment{ID: "c1", Author: "human", Body: "here are the answers"}}
+	if err := w.Process(ctx, ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(rb.moves) == 0 || rb.moves[0] != board.PhaseBrainstorming {
+		t.Errorf("first move = %v, want Brainstorming", rb.moves)
+	}
+	if card, _ := mb.GetCard(ctx, "I1"); card.Phase != board.PhaseSpecReview {
+		t.Errorf("final phase = %q, want SpecReview", card.Phase)
+	}
+}
+
+// A card already in Brainstorming must NOT be moved again (no redundant self-move
+// that would re-emit a projects_v2_item event).
+func TestWorkerBrainstormingNoRedundantMove(t *testing.T) {
+	ctx := context.Background()
+	mb := memboard.New()
+	mb.Seed(board.Card{ID: "I1", Repo: "o/r", Phase: board.PhaseBrainstorming})
+	rb := &recordingBoard{Board: mb}
+	brain := &scriptedBrain{brainstorm: []BrainstormResult{{Status: NeedsAnswers, Questions: []string{"q?"}}}}
+	w := NewWorker(rb, &fakeForge{clonePath: "/clone/o-r"}, brain, store.NewMemory(), nil)
+
+	if err := w.Process(ctx, board.Event{Kind: board.EventPhaseChanged, CardID: "I1", NewPhase: board.PhaseBrainstorming}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	// Only the terminal move (to AwaitingAnswers) — no leading move back to Brainstorming.
+	if slices.Contains(rb.moves[:max(0, len(rb.moves)-1)], board.PhaseBrainstorming) {
+		t.Errorf("redundant move to Brainstorming for an already-Brainstorming card; moves=%v", rb.moves)
 	}
 }
