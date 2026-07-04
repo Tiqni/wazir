@@ -117,6 +117,15 @@ func (noForge) OpenPR(ctx context.Context, repo, branch, base, t, b string) (str
 func (noForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
 	return forge.PRStatus{}, nil
 }
+func (noForge) CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (string, error) {
+	return "", nil
+}
+func (noForge) PRReviewFeedback(ctx context.Context, repo string, prNumber int) (forge.ReviewFeedback, error) {
+	return forge.ReviewFeedback{}, nil
+}
+func (noForge) CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]forge.CheckAnnotation, error) {
+	return nil, nil
+}
 
 func TestReceiverRejectsGet(t *testing.T) {
 	h := server.New(memboard.New(), store.NewMemory(), &capture{}, nil)

@@ -28,6 +28,15 @@ func (shapeStub) OpenPR(ctx context.Context, repo, branch, base, title, body str
 func (shapeStub) PRStatus(ctx context.Context, repo string, prNumber int) (PRStatus, error) {
 	return PRStatus{}, nil
 }
+func (shapeStub) CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (string, error) {
+	return "", nil
+}
+func (shapeStub) PRReviewFeedback(ctx context.Context, repo string, prNumber int) (ReviewFeedback, error) {
+	return ReviewFeedback{}, nil
+}
+func (shapeStub) CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]CheckAnnotation, error) {
+	return nil, nil
+}
 
 func TestCodeForgeShape(t *testing.T) {
 	var _ CodeForge = shapeStub{}

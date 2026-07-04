@@ -64,8 +64,11 @@ type fakeForge struct {
 	pushed      bool
 	removed     bool
 	calls       []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
-	prStatus    forge.PRStatus
-	prStatusErr error
+	prStatus           forge.PRStatus
+	prStatusErr        error
+	worktreeFromBranch string // path CreateWorktreeFromBranch returns
+	feedback           forge.ReviewFeedback
+	annotations        []forge.CheckAnnotation
 }
 
 func (f *fakeForge) EnsureClone(ctx context.Context, repo string) (string, error) {
@@ -97,6 +100,18 @@ func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body 
 func (f *fakeForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
 	f.calls = append(f.calls, "prStatus")
 	return f.prStatus, f.prStatusErr
+}
+func (f *fakeForge) CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (string, error) {
+	f.calls = append(f.calls, "createWorktreeFromBranch")
+	return f.worktreeFromBranch, nil
+}
+func (f *fakeForge) PRReviewFeedback(ctx context.Context, repo string, prNumber int) (forge.ReviewFeedback, error) {
+	f.calls = append(f.calls, "prReviewFeedback")
+	return f.feedback, nil
+}
+func (f *fakeForge) CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]forge.CheckAnnotation, error) {
+	f.calls = append(f.calls, "checkAnnotations")
+	return f.annotations, nil
 }
 
 var _ forge.CodeForge = (*fakeForge)(nil)
