@@ -42,6 +42,7 @@ type GitHubBoard struct {
 	projectNumber int
 	boardName     string
 	projectNodeID string
+	reworkCommand string                          // phase-2 PR-comment trigger token (e.g. "@wazir fix"); static config, not hot-reloaded
 	reloadable    atomic.Pointer[boardReloadable] // repos/bot_login/webhook_secret — hot-reloadable
 
 	cached *store.BoardRecord // lazily loaded board identity

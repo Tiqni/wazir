@@ -289,3 +289,47 @@ func TestClaudeIsolationConfig(t *testing.T) {
 		t.Errorf("env overrides not applied: %+v", c2.Claude)
 	}
 }
+
+func TestReworkDefaultsAndNormalizer(t *testing.T) {
+	t.Chdir(t.TempDir()) // no ./wazir.yaml
+	setAppEnv(t)
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Claude.MaxReworkRounds != 3 {
+		t.Errorf("MaxReworkRounds = %d, want 3", c.Claude.MaxReworkRounds)
+	}
+	if c.Claude.ReworkCommand != "@wazir fix" {
+		t.Errorf("ReworkCommand = %q, want @wazir fix", c.Claude.ReworkCommand)
+	}
+	// Unset rework_timeout / rework_allowed_tools fall back to the execute values.
+	if c.Claude.ReworkTimeout != c.Claude.ExecuteTimeout {
+		t.Errorf("ReworkTimeout = %s, want = ExecuteTimeout %s", c.Claude.ReworkTimeout, c.Claude.ExecuteTimeout)
+	}
+	if c.Claude.ReworkAllowedTools != c.Claude.ExecuteAllowedTools {
+		t.Errorf("ReworkAllowedTools = %q, want = ExecuteAllowedTools", c.Claude.ReworkAllowedTools)
+	}
+}
+
+func TestReworkExplicitOverridesPreserved(t *testing.T) {
+	t.Chdir(t.TempDir())
+	setAppEnv(t)
+	t.Setenv("WAZIR_PROJECT_OWNER", "octocat")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "7")
+	t.Setenv("WAZIR_CLAUDE_REWORK_TIMEOUT", "30m")
+	t.Setenv("WAZIR_CLAUDE_REWORK_ALLOWED_TOOLS", "Read,Edit")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The normalizer must NOT clobber an explicitly-set rework value with the execute default.
+	if c.Claude.ReworkTimeout != 30*time.Minute {
+		t.Errorf("ReworkTimeout = %s, want 30m (explicit override preserved)", c.Claude.ReworkTimeout)
+	}
+	if c.Claude.ReworkAllowedTools != "Read,Edit" {
+		t.Errorf("ReworkAllowedTools = %q, want Read,Edit (explicit override preserved)", c.Claude.ReworkAllowedTools)
+	}
+}

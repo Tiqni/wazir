@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+
+	"github.com/EmadMokhtar/wazir/internal/forge"
 )
 
 // BrainstormStatus is the outcome of a brainstorm turn (init-plan §9).
@@ -62,10 +64,25 @@ type ExecuteResult struct {
 	Error       string
 }
 
+// ReworkInput / ReworkResult — the phase-2 rework contract.
+type ReworkInput struct {
+	Transcript    string
+	WorktreePath  string // cmd.Dir for the headless claude run (the PR-head worktree)
+	Feedback      forge.ReviewFeedback
+	FailingChecks []string
+	Annotations   []forge.CheckAnnotation
+}
+type ReworkResult struct {
+	Status PhaseStatus // StatusComplete | StatusFailed
+	Notes  string
+	Error  string
+}
+
 // Brain is the reasoning surface. Faked in M1 (CannedBrain); the real
 // claude-CLI implementation (internal/claude) lands in M2.
 type Brain interface {
 	Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error)
 	Plan(ctx context.Context, in PlanInput) (PlanResult, error)
 	Execute(ctx context.Context, in ExecuteInput) (ExecuteResult, error)
+	Rework(ctx context.Context, in ReworkInput) (ReworkResult, error)
 }

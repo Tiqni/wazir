@@ -119,6 +119,7 @@ func runServe(ctx context.Context, addr string) error {
 	brain := claude.New(cfg.Claude, logger)
 	worker := orchestrator.NewWorker(b, f, brain, st, logger).
 		WithMaxBrainstormTurns(cfg.Claude.MaxBrainstormTurns).
+		WithMaxReworkRounds(cfg.Claude.MaxReworkRounds).
 		WithBase(cfg.Forge.BaseBranch)
 
 	// Live config reload: re-read wazir.yaml on change and hot-swap the safe

@@ -30,6 +30,7 @@ type CardRecord struct {
 	PRNumber               int    // M5: open PR number; captured at OpenPR; enables PRStatus + PR-index
 	LastReviewState        string // M5: "" | "approved" | "changes_requested" — report delta state
 	LastCIConclusion       string // M5: "" | "success" | "failure" | "pending" — report delta state
+	ReworkRounds           int    // M6: count of rework attempts; the cost breaker (default cap 3)
 }
 
 // Store is the persistence port.

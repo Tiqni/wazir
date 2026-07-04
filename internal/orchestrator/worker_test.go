@@ -18,6 +18,7 @@ type scriptedBrain struct {
 	brainstorm []BrainstormResult
 	plan       []PlanResult
 	execute    []ExecuteResult
+	rework     []ReworkResult
 	err        error
 
 	brainstormCalls        int    // how many times Brainstorm was invoked
@@ -52,24 +53,39 @@ func (s *scriptedBrain) Execute(ctx context.Context, in ExecuteInput) (ExecuteRe
 	s.execute = s.execute[1:]
 	return r, nil
 }
+func (s *scriptedBrain) Rework(ctx context.Context, in ReworkInput) (ReworkResult, error) {
+	if s.err != nil {
+		return ReworkResult{}, s.err
+	}
+	r := s.rework[0]
+	s.rework = s.rework[1:]
+	return r, nil
+}
 
 // fakeForge satisfies forge.CodeForge and records the op sequence. PushBranch/
 // OpenPR succeed by default; CreateWorktree returns wtPath.
 type fakeForge struct {
-	prURL       string
-	prNumber    int
-	pushErr     error
-	wtPath      string // path CreateWorktree returns ("" by default)
-	clonePath   string // path EnsureClone returns ("" by default)
-	pushed      bool
-	removed     bool
-	calls       []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
-	prStatus    forge.PRStatus
-	prStatusErr error
+	prURL          string
+	prNumber       int
+	pushErr        error
+	wtPath         string // path CreateWorktree returns ("" by default)
+	clonePath      string // path EnsureClone returns ("" by default)
+	ensureCloneErr error  // if non-nil, EnsureClone returns this error
+	pushed         bool
+	removed        bool
+	calls          []string // ordered: ensureClone, createWorktree, push, openPR, removeWorktree
+	prStatus           forge.PRStatus
+	prStatusErr        error
+	worktreeFromBranch string // path CreateWorktreeFromBranch returns
+	feedback           forge.ReviewFeedback
+	annotations        []forge.CheckAnnotation
 }
 
 func (f *fakeForge) EnsureClone(ctx context.Context, repo string) (string, error) {
 	f.calls = append(f.calls, "ensureClone")
+	if f.ensureCloneErr != nil {
+		return "", f.ensureCloneErr
+	}
 	return f.clonePath, nil
 }
 func (f *fakeForge) CreateWorktree(ctx context.Context, repo, branch string) (string, error) {
@@ -97,6 +113,18 @@ func (f *fakeForge) OpenPR(ctx context.Context, repo, branch, base, title, body 
 func (f *fakeForge) PRStatus(ctx context.Context, repo string, prNumber int) (forge.PRStatus, error) {
 	f.calls = append(f.calls, "prStatus")
 	return f.prStatus, f.prStatusErr
+}
+func (f *fakeForge) CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (string, error) {
+	f.calls = append(f.calls, "createWorktreeFromBranch")
+	return f.worktreeFromBranch, nil
+}
+func (f *fakeForge) PRReviewFeedback(ctx context.Context, repo string, prNumber int) (forge.ReviewFeedback, error) {
+	f.calls = append(f.calls, "prReviewFeedback")
+	return f.feedback, nil
+}
+func (f *fakeForge) CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]forge.CheckAnnotation, error) {
+	f.calls = append(f.calls, "checkAnnotations")
+	return f.annotations, nil
 }
 
 var _ forge.CodeForge = (*fakeForge)(nil)

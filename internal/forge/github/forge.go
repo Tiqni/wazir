@@ -280,4 +280,109 @@ func reduceCIConclusion(runs *github.ListCheckRunsResults) (string, []string) {
 	return "success", nil
 }
 
+// CreateWorktreeFromBranch adds a worktree checked out at origin/<branch> (the PR's
+// current head), after fetching it — so a rework turn builds on the PR's commits.
+// -B resets the LOCAL branch to the fetched remote head (not to base), keeping it in
+// sync if a human pushed to the PR.
+func (f *GitHubForge) CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (string, error) {
+	clone, err := f.clonePath(repo)
+	if err != nil {
+		return "", err
+	}
+	wt, err := f.worktreePath(repo, branch)
+	if err != nil {
+		return "", err
+	}
+	if err := f.resetOrigin(ctx, clone, repo); err != nil {
+		return "", err
+	}
+	if _, err := f.git.run(ctx, clone, true, "fetch", "origin", branch); err != nil {
+		return "", err
+	}
+	// Idempotent re-entry: drop a stale worktree at the same path, then prune.
+	_, _ = f.git.run(ctx, clone, false, "worktree", "remove", "--force", wt)
+	_, _ = f.git.run(ctx, clone, false, "worktree", "prune")
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir worktree parent: %w", err)
+	}
+	if _, err := f.git.run(ctx, clone, false, "worktree", "add", "-B", branch, wt, "origin/"+branch); err != nil {
+		return "", err
+	}
+	return wt, nil
+}
+
+// PRReviewFeedback returns the most recent changes-requested review body + all
+// line-level review comments.
+func (f *GitHubForge) PRReviewFeedback(ctx context.Context, repo string, prNumber int) (forge.ReviewFeedback, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return forge.ReviewFeedback{}, err
+	}
+	reviews, _, err := f.rest.PullRequests.ListReviews(ctx, owner, name, prNumber, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return forge.ReviewFeedback{}, fmt.Errorf("list reviews: %w", err)
+	}
+	summary := ""
+	for _, r := range reviews { // reviews arrive chronologically; keep the latest changes-requested body
+		if r.GetState() == "CHANGES_REQUESTED" && r.GetBody() != "" {
+			summary = r.GetBody()
+		}
+	}
+	comments, _, err := f.rest.PullRequests.ListComments(ctx, owner, name, prNumber, &github.PullRequestListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100}})
+	if err != nil {
+		return forge.ReviewFeedback{}, fmt.Errorf("list review comments: %w", err)
+	}
+	var inline []forge.InlineComment
+	for _, c := range comments {
+		inline = append(inline, forge.InlineComment{
+			Path:   c.GetPath(),
+			Line:   c.GetLine(),
+			Body:   c.GetBody(),
+			Author: c.GetUser().GetLogin(),
+		})
+	}
+	return forge.ReviewFeedback{Summary: summary, Comments: inline}, nil
+}
+
+// CheckAnnotations returns the annotations of the PR head's failed check-runs.
+func (f *GitHubForge) CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]forge.CheckAnnotation, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	pr, _, err := f.rest.PullRequests.Get(ctx, owner, name, prNumber)
+	if err != nil {
+		return nil, fmt.Errorf("get pr: %w", err)
+	}
+	runs, _, err := f.rest.Checks.ListCheckRunsForRef(ctx, owner, name, pr.GetHead().GetSHA(), &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}})
+	if err != nil {
+		return nil, fmt.Errorf("list check-runs: %w", err)
+	}
+	if runs == nil {
+		return nil, nil // no checks on the head — nothing to annotate (matches PRStatus's nil guard)
+	}
+	var out []forge.CheckAnnotation
+	for _, run := range runs.CheckRuns {
+		switch run.GetConclusion() {
+		case "failure", "timed_out", "cancelled", "action_required":
+		default:
+			continue // only failed runs carry actionable annotations
+		}
+		anns, _, err := f.rest.Checks.ListCheckRunAnnotations(ctx, owner, name, run.GetID(), &github.ListOptions{PerPage: 100})
+		if err != nil {
+			return nil, fmt.Errorf("list annotations for %s: %w", run.GetName(), err)
+		}
+		for _, a := range anns {
+			out = append(out, forge.CheckAnnotation{
+				Check:   run.GetName(),
+				Path:    a.GetPath(),
+				Line:    a.GetStartLine(),
+				Level:   a.GetAnnotationLevel(),
+				Message: a.GetMessage(),
+			})
+		}
+	}
+	return out, nil
+}
+
 var _ forge.CodeForge = (*GitHubForge)(nil)

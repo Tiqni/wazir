@@ -18,6 +18,29 @@ type PRStatus struct {
 	HeadSHA        string   // the commit the checks ran against
 }
 
+// ReviewFeedback is the changes-requested review body + line-level comments.
+type ReviewFeedback struct {
+	Summary  string          // the most recent changes-requested review body
+	Comments []InlineComment // line-level review comments
+}
+
+// InlineComment is one line-level PR review comment.
+type InlineComment struct {
+	Path   string
+	Line   int
+	Body   string
+	Author string
+}
+
+// CheckAnnotation is one annotation of a failed check-run.
+type CheckAnnotation struct {
+	Check   string // check-run name
+	Path    string
+	Line    int
+	Level   string // "failure" | "warning" | "notice"
+	Message string
+}
+
 // CodeForge is the VCS surface. The forge owns filesystem layout (clone +
 // worktree roots) so the provider-free core never holds local paths.
 type CodeForge interface {
@@ -35,4 +58,12 @@ type CodeForge interface {
 	OpenPR(ctx context.Context, repo, branch, base, title, body string) (prURL string, prNumber int, err error)
 	// PRStatus reports the current review decision + CI conclusion for a PR.
 	PRStatus(ctx context.Context, repo string, prNumber int) (PRStatus, error)
+	// CreateWorktreeFromBranch adds a worktree at the branch's REMOTE head
+	// (origin/<branch>, after a fetch) — preserves the PR's commits. The rework
+	// mirror of CreateWorktree (which resets to base).
+	CreateWorktreeFromBranch(ctx context.Context, repo, branch string) (path string, err error)
+	// PRReviewFeedback returns the changes-requested review body + inline comments.
+	PRReviewFeedback(ctx context.Context, repo string, prNumber int) (ReviewFeedback, error)
+	// CheckAnnotations returns the annotations of the PR head's failed check-runs.
+	CheckAnnotations(ctx context.Context, repo string, prNumber int) ([]CheckAnnotation, error)
 }

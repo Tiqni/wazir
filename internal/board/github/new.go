@@ -20,6 +20,7 @@ func New(httpClient *http.Client, cfg config.Config, st store.Store) *GitHubBoar
 		ownerType:     cfg.GitHub.OwnerType,
 		projectNumber: cfg.Project.Number,
 		boardName:     cfg.Project.BoardName,
+		reworkCommand: cfg.Claude.ReworkCommand,
 	}
 	b.Reload(cfg.Repos, cfg.BotLogin, cfg.GitHub.WebhookSecret)
 	return b

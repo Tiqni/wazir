@@ -61,9 +61,23 @@ func (Resolver) Resolve(card board.Card, ev board.Event, lastCommentID string) D
 		if ev.Kind == board.EventReviewSubmitted || ev.Kind == board.EventChecksCompleted {
 			return Decision{ActReport}
 		}
+		if ev.Kind == board.EventReworkRequested {
+			return Decision{ActRework}
+		}
 		return Decision{ActNone}
 
+	case board.PhaseReworking:
+		// A stale review/CI webhook from the PR's prior push must not queue a second
+		// rework while one is already in flight here; only a rework trigger acts.
+		if ev.Kind == board.EventReviewSubmitted || ev.Kind == board.EventChecksCompleted {
+			return Decision{ActNone}
+		}
+		return Decision{ActRework}
+
 	default: // Done, Failed
+		if card.Phase == board.PhaseFailed && ev.Kind == board.EventReworkRequested {
+			return Decision{ActRework}
+		}
 		return Decision{ActNone}
 	}
 }

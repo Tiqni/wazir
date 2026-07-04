@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/go-github/v66/github"
@@ -80,11 +81,34 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		return ev, nil
 
 	case *github.IssueCommentEvent:
-		// A conversation comment on a PR arrives as issue_comment, but its issue
-		// node id is the PR's, not the card's. Ignore here (phase-2 rework will
-		// route these via the PR-index).
+		// A comment on a PR arrives as issue_comment, but its issue node id is the
+		// PR's, not the card's. Phase 2: if it's the human-authored rework command,
+		// route it via the PR-index to the card; otherwise ignore.
 		if e.GetIssue().IsPullRequest() {
-			return board.Event{Kind: board.EventIgnore}, nil
+			// Only a newly-created comment triggers rework — editing or deleting one
+			// must not re-fire (mirrors the non-PR path's action filter below).
+			if e.GetAction() != "created" {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
+			repo := e.GetRepo().GetFullName()
+			if !b.repoAllowed(rl, repo) {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
+			author := e.GetComment().GetUser().GetLogin()
+			body := e.GetComment().GetBody()
+			isBot := author == rl.botLogin || strings.Contains(body, botMarker)
+			if isBot || b.reworkCommand == "" || !strings.Contains(strings.ToLower(body), strings.ToLower(b.reworkCommand)) {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
+			prNumber := prNumberFromCommentEvent(e)
+			if prNumber == 0 {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
+			cardID, ok := b.lookupPRIndex(repo, prNumber)
+			if !ok {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
+			return board.Event{Kind: board.EventReworkRequested, CardID: cardID, Repo: repo, Dedup: delivery}, nil
 		}
 		repo := e.GetRepo().GetFullName()
 		if !b.repoAllowed(rl, repo) {
@@ -186,4 +210,19 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 	default:
 		return board.Event{Kind: board.EventIgnore}, nil
 	}
+}
+
+// prNumberFromCommentEvent extracts the PR number from an issue_comment event whose
+// issue is a PR (the pull_request URL ends with .../pulls/<n>).
+func prNumberFromCommentEvent(e *github.IssueCommentEvent) int {
+	u := e.GetIssue().GetPullRequestLinks().GetURL()
+	i := strings.LastIndex(u, "/")
+	if i < 0 || i+1 >= len(u) {
+		return 0
+	}
+	n, err := strconv.Atoi(u[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
 }

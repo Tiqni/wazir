@@ -16,6 +16,9 @@ import (
 // defaultMaxBrainstormTurns caps the clarifying-question loop (M2 spec §6).
 const defaultMaxBrainstormTurns = 8
 
+// defaultMaxReworkRounds caps rework attempts per card before escalating to a human.
+const defaultMaxReworkRounds = 3
+
 // Worker executes a Resolver Decision against the ports. It owns the
 // deterministic mapping from a Brain result to board writes.
 type Worker struct {
@@ -27,6 +30,7 @@ type Worker struct {
 	log                *zap.Logger
 	base               string       // PR base branch
 	maxBrainstormTurns atomic.Int64 // cap on the clarifying-question loop (M2); hot-reloadable
+	maxReworkRounds    int          // cap on rework attempts per card (M6); set once at startup
 }
 
 // NewWorker builds a Worker. A nil logger is replaced with a no-op.
@@ -34,7 +38,7 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 	if log == nil {
 		log = zap.NewNop()
 	}
-	w := &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main"}
+	w := &Worker{board: b, forge: f, brain: br, store: st, log: log, base: "main", maxReworkRounds: defaultMaxReworkRounds}
 	w.maxBrainstormTurns.Store(defaultMaxBrainstormTurns)
 	return w
 }
@@ -43,6 +47,14 @@ func NewWorker(b board.Board, f forge.CodeForge, br Brain, st store.Store, log *
 // A non-positive n is ignored. Returns w for chaining.
 func (w *Worker) WithMaxBrainstormTurns(n int) *Worker {
 	w.SetMaxBrainstormTurns(n)
+	return w
+}
+
+// WithMaxReworkRounds overrides the rework cap (from config). Non-positive is ignored.
+func (w *Worker) WithMaxReworkRounds(n int) *Worker {
+	if n > 0 {
+		w.maxReworkRounds = n
+	}
 	return w
 }
 
@@ -115,6 +127,8 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 		return w.plan(ctx, card)
 	case ActReport:
 		return w.reportPhase(ctx, card)
+	case ActRework:
+		return w.reworkPhase(ctx, card)
 	case ActExecute:
 		// Direct Building re-entry (crash recovery / re-delivered Building event):
 		// recover the worktree path, branch, and plan path persisted by plan().
@@ -317,7 +331,19 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 	}
 	reviewChanged := status.ReviewDecision != rec.LastReviewState
 	ciChanged := status.CIConclusion != rec.LastCIConclusion
+	// A genuinely-healthy observation means the last rework (if any) was productive,
+	// so reset the rework budget: the cap (maxReworkRounds) counts CONSECUTIVE
+	// unproductive rounds — a rut never reaches green CI or an approval — not the
+	// lifetime of a PR a human keeps legitimately iterating on. Checked independently
+	// of the report delta so an already-green PR (no state change) still resets.
+	healthy := status.CIConclusion == "success" || status.ReviewDecision == "approved"
 	if !reviewChanged && !ciChanged {
+		if healthy && rec.ReworkRounds != 0 {
+			rec.ReworkRounds = 0
+			if err := w.store.PutCard(card.ID, rec); err != nil {
+				return fmt.Errorf("persist rework reset: %w", err)
+			}
+		}
 		return nil
 	}
 	if comment := reportComment(status, reviewChanged, ciChanged); comment != "" {
@@ -333,6 +359,9 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 			return fmt.Errorf("move to Failed: %w", err)
 		}
 	}
+	if healthy {
+		rec.ReworkRounds = 0
+	}
 	// Persist delta state only after the successful board writes above (the comment,
 	// and a move when one was warranted — approved/green stays put), so a mid-flight
 	// failure re-reports on retry rather than being swallowed.
@@ -340,6 +369,102 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 	rec.LastCIConclusion = status.CIConclusion
 	if err := w.store.PutCard(card.ID, rec); err != nil {
 		return fmt.Errorf("persist report state: %w", err)
+	}
+	return nil
+}
+
+// reworkPhase re-enters the PR-head worktree, runs one claude turn to address the
+// review feedback + fix CI, and re-pushes. Human-gated; capped by maxReworkRounds.
+func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
+	rec, ok, err := w.store.GetCard(card.ID)
+	if err != nil {
+		return fmt.Errorf("read card record %s: %w", card.ID, err)
+	}
+	if !ok || rec.PRNumber == 0 || rec.Branch == "" {
+		// Fail closed: a card with no opened PR (e.g. dragged straight into Reworking)
+		// has nothing to rework. Explain the bounce rather than silently Failing it.
+		w.log.Warn("rework skipped: no PR/branch for card", zap.String("card", card.ID))
+		if err := w.board.PostComment(ctx, card.ID, "There's no open PR for this card yet, so there's nothing to rework."); err != nil {
+			return err
+		}
+		return w.board.MoveTo(ctx, card.ID, board.PhaseFailed)
+	}
+	// Cost breaker: at the cap, escalate without spending a (paid) turn.
+	if rec.ReworkRounds >= w.maxReworkRounds {
+		msg := fmt.Sprintf("I've reworked this PR %d times without it going green. It needs a human to take over.", w.maxReworkRounds)
+		if err := w.board.PostComment(ctx, card.ID, msg); err != nil {
+			return err
+		}
+		return w.board.MoveTo(ctx, card.ID, board.PhaseFailed)
+	}
+	// Trigger B (a PR command) fires while the card is still in PRReview/Failed;
+	// reflect the working state on the board before the turn.
+	if card.Phase != board.PhaseReworking {
+		if err := w.board.MoveTo(ctx, card.ID, board.PhaseReworking); err != nil {
+			return err
+		}
+		card.Phase = board.PhaseReworking
+	}
+	if _, err := w.forge.EnsureClone(ctx, card.Repo); err != nil {
+		return fmt.Errorf("ensure clone: %w", err)
+	}
+	wt, err := w.forge.CreateWorktreeFromBranch(ctx, card.Repo, rec.Branch)
+	if err != nil {
+		return fmt.Errorf("create worktree from branch: %w", err)
+	}
+	if wt == "" {
+		return fmt.Errorf("create worktree from branch returned an empty path for %s", card.Repo)
+	}
+	feedback, err := w.forge.PRReviewFeedback(ctx, card.Repo, rec.PRNumber)
+	if err != nil {
+		return fmt.Errorf("pr review feedback: %w", err)
+	}
+	annotations, err := w.forge.CheckAnnotations(ctx, card.Repo, rec.PRNumber)
+	if err != nil {
+		return fmt.Errorf("check annotations: %w", err)
+	}
+	// Failing-check names are best-effort context: a PRStatus error just omits them
+	// (the annotations above already carry the actionable failure detail), so it
+	// must not burn a rework round by failing the turn.
+	var failing []string
+	if status, err := w.forge.PRStatus(ctx, card.Repo, rec.PRNumber); err == nil {
+		failing = status.FailingChecks
+	}
+	res, err := w.brain.Rework(ctx, ReworkInput{
+		Transcript:    BuildTranscript(card),
+		WorktreePath:  wt,
+		Feedback:      feedback,
+		FailingChecks: failing,
+		Annotations:   annotations,
+	})
+	if err != nil {
+		// The turn didn't produce a result (a Brain-level/transport failure, not a
+		// turn that ran-and-failed) — don't burn a rework round for it.
+		return fmt.Errorf("rework: %w", err)
+	}
+	// A turn ran and produced a result (complete or failed): count it against the cap.
+	rec.ReworkRounds++
+	if putErr := w.store.PutCard(card.ID, rec); putErr != nil {
+		return fmt.Errorf("persist rework round: %w", putErr)
+	}
+	if res.Status != StatusComplete {
+		if err := w.board.PostComment(ctx, card.ID, "Rework attempt didn't converge: "+res.Error); err != nil {
+			return err
+		}
+		return w.board.MoveTo(ctx, card.ID, board.PhaseFailed)
+	}
+	if err := w.forge.PushBranch(ctx, card.Repo, rec.Branch); err != nil {
+		return fmt.Errorf("push branch: %w", err)
+	}
+	if err := w.board.PostComment(ctx, card.ID, fmt.Sprintf("Reworked (round %d) and pushed; back for review.", rec.ReworkRounds)); err != nil {
+		return err
+	}
+	if err := w.board.MoveTo(ctx, card.ID, board.PhasePRReview); err != nil {
+		return err
+	}
+	// Success: drop the worktree (best-effort; keep it on failure for debugging).
+	if err := w.forge.RemoveWorktree(ctx, card.Repo, wt); err != nil {
+		w.log.Warn("remove worktree", zap.String("card", card.ID), zap.String("path", wt), zap.Error(err))
 	}
 	return nil
 }

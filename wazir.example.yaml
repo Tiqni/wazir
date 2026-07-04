@@ -48,6 +48,9 @@ claude:
   plan_timeout: 45m      # writing-plans turn deadline; a full plan can exceed 10m and fail the card
   execute_timeout: 60m   # execute is heavier than plan — give it the most headroom
   execute_allowed_tools: "Skill,Read,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(ls:*),Bash(cat:*)"
+  max_rework_rounds: 3           # phase-2 rework cost breaker (attempts per card, then escalate)
+  rework_command: "@wazir fix"   # PR-comment token a human uses to trigger a rework
+  # rework_timeout / rework_allowed_tools default to the execute_* values if unset.
 
 # Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
 # each in-flight card gets its own worktree. Auth uses a fresh App installation
