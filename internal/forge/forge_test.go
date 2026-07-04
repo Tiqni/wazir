@@ -22,8 +22,11 @@ func (shapeStub) CreateWorktree(ctx context.Context, repo, branch string) (strin
 }
 func (shapeStub) RemoveWorktree(ctx context.Context, repo, path string) error { return nil }
 func (shapeStub) PushBranch(ctx context.Context, repo, branch string) error   { return nil }
-func (shapeStub) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, error) {
-	return "", nil
+func (shapeStub) OpenPR(ctx context.Context, repo, branch, base, title, body string) (string, int, error) {
+	return "", 0, nil
+}
+func (shapeStub) PRStatus(ctx context.Context, repo string, prNumber int) (PRStatus, error) {
+	return PRStatus{}, nil
 }
 
 func TestCodeForgeShape(t *testing.T) {

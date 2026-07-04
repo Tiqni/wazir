@@ -1,0 +1,7 @@
+{
+  "action": "created",
+  "issue": { "node_id": "PR_NODE_1", "pull_request": { "url": "https://api.github.com/repos/octocat/hello/pulls/9" } },
+  "comment": { "id": 123, "body": "the linter is failing", "user": { "login": "alice" } },
+  "repository": { "full_name": "octocat/hello" },
+  "sender": { "login": "alice" }
+}

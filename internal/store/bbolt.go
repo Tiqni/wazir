@@ -13,6 +13,7 @@ var (
 	bucketCards      = []byte("cards")
 	bucketDeliveries = []byte("deliveries")
 	bucketLocks      = []byte("locks")
+	bucketPRIndex    = []byte("pr_index")
 )
 
 // Bbolt is a bbolt-backed Store.
@@ -28,7 +29,7 @@ func OpenBbolt(path string) (*Bbolt, error) {
 		return nil, fmt.Errorf("open bbolt %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketBoards, bucketCards, bucketDeliveries, bucketLocks} {
+		for _, b := range [][]byte{bucketBoards, bucketCards, bucketDeliveries, bucketLocks, bucketPRIndex} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -60,6 +61,25 @@ func (s *Bbolt) GetCard(issueNodeID string) (CardRecord, bool, error) {
 
 func (s *Bbolt) PutCard(issueNodeID string, rec CardRecord) error {
 	return s.put(bucketCards, issueNodeID, rec)
+}
+
+func (s *Bbolt) PutPRIndex(repo string, prNumber int, issueNodeID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketPRIndex).Put([]byte(prIndexKey(repo, prNumber)), []byte(issueNodeID))
+	})
+}
+
+func (s *Bbolt) GetPRIndex(repo string, prNumber int) (string, bool, error) {
+	var id string
+	var ok bool
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(bucketPRIndex).Get([]byte(prIndexKey(repo, prNumber))); v != nil {
+			id = string(v)
+			ok = true
+		}
+		return nil
+	})
+	return id, ok, err
 }
 
 func (s *Bbolt) Close() error { return s.db.Close() }

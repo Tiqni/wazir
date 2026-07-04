@@ -33,6 +33,19 @@ func (b *GitHubBoard) repoAllowed(rl *boardReloadable, full string) bool {
 	return false
 }
 
+// lookupPRIndex resolves a PR number to its card's issue node id via the store
+// reverse index. Returns ("", false) on a cold index or a missing store.
+func (b *GitHubBoard) lookupPRIndex(repo string, prNumber int) (string, bool) {
+	if b.store == nil {
+		return "", false
+	}
+	id, ok, err := b.store.GetPRIndex(repo, prNumber)
+	if err != nil || !ok {
+		return "", false
+	}
+	return id, true
+}
+
 // ParseEvent validates and normalizes a raw GitHub webhook into a domain Event.
 func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (board.Event, error) {
 	sig := headerGet(headers, "X-Hub-Signature-256")
@@ -67,6 +80,12 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		return ev, nil
 
 	case *github.IssueCommentEvent:
+		// A conversation comment on a PR arrives as issue_comment, but its issue
+		// node id is the PR's, not the card's. Ignore here (phase-2 rework will
+		// route these via the PR-index).
+		if e.GetIssue().IsPullRequest() {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
 		repo := e.GetRepo().GetFullName()
 		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
@@ -115,6 +134,54 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 			}
 		}
 		return ev, nil
+
+	case *github.PullRequestReviewEvent:
+		if e.GetAction() != "submitted" {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		// Decision-grade only: ignore "commented"/"dismissed" reviews. Webhook
+		// review.state is lowercase here (the REST API used by forge.PRStatus
+		// returns UPPERCASE — keep the two casings straight).
+		if s := e.GetReview().GetState(); s != "approved" && s != "changes_requested" {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		repo := e.GetRepo().GetFullName()
+		if !b.repoAllowed(rl, repo) {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		if rl.botLogin != "" && e.GetSender().GetLogin() == rl.botLogin {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		cardID, ok := b.lookupPRIndex(repo, e.GetPullRequest().GetNumber())
+		if !ok {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		return board.Event{Kind: board.EventReviewSubmitted, CardID: cardID, Repo: repo, Dedup: delivery}, nil
+
+	case *github.CheckSuiteEvent:
+		if e.GetAction() != "completed" {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		repo := e.GetRepo().GetFullName()
+		if !b.repoAllowed(rl, repo) {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		if rl.botLogin != "" && e.GetSender().GetLogin() == rl.botLogin {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		prs := e.GetCheckSuite().PullRequests
+		if len(prs) == 0 {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		// Wazir opens exactly one PR per card off its own branch, so the first
+		// (typically only) PR in the suite is the card's PR. (GitHub omits
+		// cross-repo/fork PRs from check_suite.pull_requests, but Wazir's PRs are
+		// always same-repo, so the array is populated — empty above => not ours.)
+		cardID, ok := b.lookupPRIndex(repo, prs[0].GetNumber())
+		if !ok {
+			return board.Event{Kind: board.EventIgnore}, nil
+		}
+		return board.Event{Kind: board.EventChecksCompleted, CardID: cardID, Repo: repo, Dedup: delivery}, nil
 
 	default:
 		return board.Event{Kind: board.EventIgnore}, nil

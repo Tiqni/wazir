@@ -1,0 +1,6 @@
+{
+  "action": "completed",
+  "check_suite": { "conclusion": "failure", "pull_requests": [ { "number": 9 } ] },
+  "repository": { "full_name": "octocat/hello" },
+  "sender": { "login": "github-actions[bot]" }
+}

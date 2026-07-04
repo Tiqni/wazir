@@ -204,3 +204,95 @@ func TestParseProjectsV2ItemPopulatesRepoFromAllowedCache(t *testing.T) {
 		t.Errorf("allowed cached repo should populate ev.Repo; got kind=%v repo=%q", ev.Kind, ev.Repo)
 	}
 }
+
+// newParserWithStore is newParser() plus a store seeded with a PR-index entry,
+// so PR webhooks reverse-map to a card.
+func newParserWithStore(t *testing.T) *GitHubBoard {
+	t.Helper()
+	b := newParser()
+	st := store.NewMemory()
+	if err := st.PutPRIndex("octocat/hello", 9, "ISSUE_NODE_1"); err != nil {
+		t.Fatalf("seed PR-index: %v", err)
+	}
+	b.store = st
+	return b
+}
+
+func TestParsePullRequestReviewChangesRequested(t *testing.T) {
+	b := newParserWithStore(t)
+	payload := loadFixture(t, "pull_request_review.json")
+	h := headersFor("pull_request_review", "d-rev", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReviewSubmitted {
+		t.Errorf("Kind = %v, want EventReviewSubmitted", ev.Kind)
+	}
+	if ev.CardID != "ISSUE_NODE_1" || ev.Repo != "octocat/hello" || ev.Dedup != "d-rev" {
+		t.Errorf("event = %+v", ev)
+	}
+}
+
+func TestParseCheckSuiteCompleted(t *testing.T) {
+	b := newParserWithStore(t)
+	payload := loadFixture(t, "check_suite.json")
+	h := headersFor("check_suite", "d-ci", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventChecksCompleted {
+		t.Errorf("Kind = %v, want EventChecksCompleted", ev.Kind)
+	}
+	if ev.CardID != "ISSUE_NODE_1" || ev.Repo != "octocat/hello" || ev.Dedup != "d-ci" {
+		t.Errorf("event = %+v", ev)
+	}
+}
+
+func TestParsePullRequestReviewCommentedIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	// A plain "commented" review is not decision-grade -> ignored.
+	payload := []byte(`{"action":"submitted","review":{"state":"commented","user":{"login":"alice"}},` +
+		`"pull_request":{"number":9},"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("pull_request_review", "d-rev3", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (commented is not decision-grade)", ev.Kind)
+	}
+}
+
+func TestParsePullRequestReviewUnknownPRIgnored(t *testing.T) {
+	b := newParser() // no PR-index entry
+	b.store = store.NewMemory()
+	payload := loadFixture(t, "pull_request_review.json")
+	h := headersFor("pull_request_review", "d-rev2", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (no PR-index entry)", ev.Kind)
+	}
+}
+
+func TestParseIssueCommentOnPRIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	payload := loadFixture(t, "issue_comment_on_pr.json")
+	h := headersFor("issue_comment", "d-prc", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (comment on a PR, not the card issue)", ev.Kind)
+	}
+}
