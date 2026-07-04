@@ -57,7 +57,10 @@ func loadPrivateKey(v string) ([]byte, error) {
 	if v == "" {
 		return nil, fmt.Errorf("github.private_key is empty (set WAZIR_GITHUB_PRIVATE_KEY)")
 	}
-	if fi, err := os.Stat(v); err == nil && !fi.IsDir() {
+	if fi, err := os.Stat(v); err == nil {
+		if fi.IsDir() {
+			return nil, fmt.Errorf("github.private_key %q is a directory, not a PEM file", v)
+		}
 		return os.ReadFile(v)
 	}
 	if decoded, err := base64.StdEncoding.DecodeString(v); err == nil && bytes.Contains(decoded, []byte("PRIVATE KEY")) {

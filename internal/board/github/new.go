@@ -12,7 +12,7 @@ import (
 
 // New wires a GitHubBoard from an authenticated HTTP client, config, and store.
 func New(httpClient *http.Client, cfg config.Config, st store.Store) *GitHubBoard {
-	return &GitHubBoard{
+	b := &GitHubBoard{
 		api:           &ghProjects{gql: githubv4.NewClient(httpClient)},
 		rest:          github.NewClient(httpClient),
 		store:         st,
@@ -20,8 +20,7 @@ func New(httpClient *http.Client, cfg config.Config, st store.Store) *GitHubBoar
 		ownerType:     cfg.GitHub.OwnerType,
 		projectNumber: cfg.Project.Number,
 		boardName:     cfg.Project.BoardName,
-		botLogin:      cfg.BotLogin,
-		repos:         cfg.Repos,
-		webhookSecret: cfg.GitHub.WebhookSecret,
 	}
+	b.Reload(cfg.Repos, cfg.BotLogin, cfg.GitHub.WebhookSecret)
+	return b
 }

@@ -33,6 +33,11 @@ bot_login: your-bot-login # filters the bot's own webhook events
 store:
   db_path: wazir.db
 
+# Live reload: `wazir serve` watches this file (fsnotify) and hot-applies changes to
+# claude.* (except bin), repos, bot_login, and webhook_secret — no restart needed.
+# Changes to github auth, project, store, forge, claude.bin, or --addr require a restart
+# (the daemon logs a warning that they were ignored).
+#
 # Headless claude-CLI brain (M2). Secrets/auth for `claude` come from the CLI's
 # own login, not this file. Override any field via WAZIR_CLAUDE_<FIELD>.
 claude:

@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
@@ -76,5 +77,15 @@ func TestLoadPrivateKeyAutoDetect(t *testing.T) {
 func TestLoadPrivateKeyEmpty(t *testing.T) {
 	if _, err := loadPrivateKey(""); err == nil {
 		t.Fatal("expected an error for an empty private key")
+	}
+}
+
+func TestLoadPrivateKeyRejectsDirectory(t *testing.T) {
+	_, err := loadPrivateKey(t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error when private_key points at a directory")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Errorf("error should name the directory problem, got: %v", err)
 	}
 }

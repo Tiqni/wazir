@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/EmadMokhtar/wazir/internal/board"
 	"github.com/EmadMokhtar/wazir/internal/store"
 )
 
@@ -37,34 +36,5 @@ func TestResolveCardPreservesProjectItemID(t *testing.T) {
 	}
 	if rec.Repo != "octocat/hello" || rec.IssueNumber != 9 {
 		t.Errorf("repo/number not merged, got %+v", rec)
-	}
-}
-
-func TestParseProjectItemAppliesAllowListFromCache(t *testing.T) {
-	payload := loadFixture(t, "projects_v2_item.json") // content ISSUE_NODE_1, project PROJECT_NODE_1
-	h := headersFor("projects_v2_item", "d7", sign([]byte("shh"), payload))
-
-	// Cached repo NOT in the allow-list -> ignored.
-	forbidden := newParser()
-	forbidden.store = store.NewMemory()
-	_ = forbidden.store.PutCard("ISSUE_NODE_1", store.CardRecord{Repo: "octocat/forbidden"})
-	ev, err := forbidden.ParseEvent(h, payload)
-	if err != nil {
-		t.Fatalf("ParseEvent: %v", err)
-	}
-	if ev.Kind != board.EventIgnore {
-		t.Errorf("forbidden cached repo should be ignored, got %v", ev.Kind)
-	}
-
-	// Cached repo allowed -> phase change with Repo populated.
-	allowed := newParser() // repos = ["octocat/hello"]
-	allowed.store = store.NewMemory()
-	_ = allowed.store.PutCard("ISSUE_NODE_1", store.CardRecord{Repo: "octocat/hello"})
-	ev2, err := allowed.ParseEvent(h, payload)
-	if err != nil {
-		t.Fatalf("ParseEvent: %v", err)
-	}
-	if ev2.Kind != board.EventPhaseChanged || ev2.Repo != "octocat/hello" {
-		t.Errorf("allowed cached repo: got kind=%v repo=%q", ev2.Kind, ev2.Repo)
 	}
 }

@@ -26,12 +26,19 @@ import (
 //	go test -tags integration ./internal/forge/github/ -run TestIntegrationForgeRoundTrip -v
 func TestIntegrationForgeRoundTrip(t *testing.T) {
 	repo := os.Getenv("WAZIR_IT_REPO")
-	if os.Getenv("WAZIR_GITHUB_APP_ID") == "" || os.Getenv("WAZIR_GITHUB_INSTALLATION_ID") == "" || repo == "" {
+	if os.Getenv("WAZIR_GITHUB_APP_ID") == "" || os.Getenv("WAZIR_GITHUB_INSTALLATION_ID") == "" ||
+		os.Getenv("WAZIR_GITHUB_PRIVATE_KEY") == "" || repo == "" {
 		t.Skip("set WAZIR_GITHUB_APP_ID/INSTALLATION_ID/PRIVATE_KEY and WAZIR_IT_REPO to run")
 	}
 	ctx := context.Background()
-	appID, _ := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_APP_ID"), 10, 64)
-	instID, _ := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_INSTALLATION_ID"), 10, 64)
+	appID, err := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_APP_ID"), 10, 64)
+	if err != nil {
+		t.Fatalf("WAZIR_GITHUB_APP_ID must be an integer: %v", err)
+	}
+	instID, err := strconv.ParseInt(os.Getenv("WAZIR_GITHUB_INSTALLATION_ID"), 10, 64)
+	if err != nil {
+		t.Fatalf("WAZIR_GITHUB_INSTALLATION_ID must be an integer: %v", err)
+	}
 	auth, err := githubauth.New(ctx, config.Config{GitHub: config.GitHubConfig{
 		AppID: appID, InstallationID: instID, PrivateKey: os.Getenv("WAZIR_GITHUB_PRIVATE_KEY"),
 	}})
