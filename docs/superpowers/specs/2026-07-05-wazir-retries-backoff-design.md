@@ -26,15 +26,22 @@ This is the "retries/backoff" line item of M5 hardening (init plan §10, §12).
 
 - **Hybrid classification.** Errors are classified transient-vs-permanent, and we
   retry *both* idempotent I/O and — conservatively — `claude` transport failures.
-- **Retry lives inside the provider impls, not the core.** The transient/permanent
-  decision is inherently provider-specific (go-github status codes, git stderr
+- **Retry lives in the provider layer, not the core.** The transient/permanent
+  decision is inherently provider-specific (HTTP status codes, git stderr
   patterns, the `claude` envelope), so classification and the retry wrapping live in
-  `internal/board/github`, `internal/forge/github`, and `internal/claude`. The
+  `internal/githubauth`, `internal/forge/github`, and `internal/claude`. The
   `internal/orchestrator` core is **unchanged** and still imports no provider
   package (CLAUDE.md rule 1; `imports_test.go` stays green). The ports become
   reliable *by construction*: every caller — the worker today, the `memory` fake
   tomorrow — gets resilience for free, and the `GetCard`-drop bug is fixed as a
   side effect.
+- **The GitHub-HTTP half is a transport concern, not per-call.** `githubauth.New`
+  builds a single `*http.Client{Transport: ghinstallation.Transport}` shared by
+  board REST, board GraphQL, and forge PR calls. Wrapping that transport in one
+  retrying `http.RoundTripper` covers all GitHub HTTP in one place — far fewer edit
+  sites than wrapping each call, uniform across REST and GraphQL, and automatically
+  covering future calls. `board/github` and `forge/github`'s go-github calls are
+  left untouched; they inherit retry through the shared client.
 - **Never retry a paid model turn that ran.** A model-reported failure
   (`res.Status != complete`, `is_error`, a failure subtype) is non-retryable → the
   existing `Fail` path. Only a `claude` *transport* failure that occurred **before
@@ -69,18 +76,20 @@ property of each **port implementation** plus a shared leaf helper.
 
 ```
 internal/retry/            NEW leaf util. Policy + Do(); pure, no provider imports.
-internal/board/github/     wraps REST + GraphQL calls; transientGitHub classifier.
-internal/forge/github/     wraps network git ops + go-github PR calls; transientGit classifier.
+internal/githubauth/       NEW retrying http.RoundTripper wrapping the ghinstallation
+                           transport; covers board REST + GraphQL + forge PRs. HTTP-status classifier.
+internal/forge/github/     wraps the one git-exec chokepoint (network ops); transientGit classifier.
 internal/claude/           wraps the exec run; conservative transientClaude classifier.
 internal/orchestrator/     UNCHANGED. Still imports only board + forge interfaces.
 ```
 
-Why provider-impl placement (settled in brainstorming): the classification
-knowledge only exists in the impls, and a worker-level retry would force provider
+Why provider-layer placement (settled in brainstorming): the classification
+knowledge only exists provider-side, and a worker-level retry would force provider
 error types up into the core (breaking rule 1 / `imports_test.go`) or require a
 `Temporary() bool` wrapper on every error return in every port method — more
-surface area, not less. Placing it in the impls matches where the code already owns
-provider mapping (column↔Phase, `IsBot`, `Dedup`, the marker).
+surface area, not less. The GitHub-HTTP retry is a natural transport concern
+(`githubauth` already owns the one shared client), and the git/`claude` retries sit
+at their single exec chokepoints — three insertion points, not twenty.
 
 ## Component 1 — `internal/retry` (shared leaf helper)
 
@@ -110,13 +119,16 @@ func Do(ctx context.Context, p Policy, classify Classifier, fn func() error) err
 - No provider imports — it is a leaf util both the github impls and the `claude`
   runner may import without the core ever importing a provider.
 
-## Component 2 — classification (each in its impl)
+## Component 2 — classification (each provider-side)
 
-- **`board/github` → `transientGitHub(err)`** — retry: `*github.RateLimitError` and
-  `*github.AbuseRateLimitError` (surface `Rate.Reset` / `RetryAfter` as the delay),
-  `*github.ErrorResponse` with a `5xx` or `429` status, GraphQL transport `5xx`, and
-  `net`/`url` timeout / connection-reset errors. Do **not** retry `4xx` validation,
-  auth (`401`/`403` non-rate-limit), or not-found — those are terminal.
+- **`githubauth` transport → HTTP-status classifier** — the `RoundTripper` inspects
+  the `*http.Response` directly: retry on `429` (honoring `Retry-After` /
+  `X-RateLimit-Reset` as the next delay) and `500`/`502`/`503`/`504`; retry on a
+  `RoundTrip` transport error that is a `net`/`url` timeout or connection reset. Do
+  **not** retry `4xx` other than `429`, nor a `401`/`403` that is not a rate limit —
+  those are terminal. This one classifier covers REST **and** GraphQL because both
+  flow through the same client, side-stepping go-github-vs-githubv4 typed-error
+  differences.
 - **`forge/github` → `transientGit(err)`** — the git CLI surfaces network trouble in
   stderr; retry on patterns like `Could not resolve host`, `Connection timed out`,
   `Connection reset`, `early EOF`, `the remote end hung up`, `TLS`, and remote `5xx`.
@@ -129,17 +141,19 @@ func Do(ctx context.Context, p Policy, classify Classifier, fn func() error) err
   `is_error` / failure subtype is **not** retried — it flows to the existing Fail
   path unchanged.
 
-## Component 3 — call sites wrapped
+## Component 3 — insertion points
 
-- **`board/github` (`board.go`, `projects_gql.go`):** each REST call — `PostComment`,
-  `SetBody`, `GetCard`, comment/PR reads — and each GraphQL `Mutate`/`Query` —
-  `MoveTo`, provisioning reconcile, per-card `node()` resolve — wrapped in
-  `retry.Do` with `transientGitHub`. This is what fixes the `GetCard`-drop bug.
-- **`forge/github` (`forge.go`, `git.go`):** network git ops (clone/fetch,
-  `PushBranch`) with `transientGit`; go-github PR calls (`OpenPR`, `PRStatus`,
-  `PRReviewFeedback`, `CheckAnnotations`) with `transientGitHub`. Purely-local ops
-  (creating a worktree from an already-present clone) need no network retry, but a
-  `fetch` performed inside one does.
+- **`githubauth` (`internal/githubauth`):** `New` wraps the `ghinstallation.Transport`
+  in a `retryTransport` (a `http.RoundTripper` that calls `retry.Do` around the inner
+  `RoundTrip`). Every board REST call, board GraphQL `Mutate`/`Query`, and forge PR
+  call inherits retry through the one shared `*http.Client` — no edits to `board.go`,
+  `projects_gql.go`, or `forge.go`. This is also what fixes the `GetCard`-drop bug.
+  (POST/mutation retries rely on `Request.GetBody`, which `net/http` populates for
+  the byte-buffer bodies go-github/githubv4 send, so the body can be rewound.)
+- **`forge/github` (`git.go`):** the single `gitRunner.run` chokepoint that every git
+  op flows through gets the retry, gated on network ops (`auth == true`:
+  clone/fetch/push) with `transientGit`. Purely-local ops (`worktree add`,
+  `rev-parse`) pass `auth == false` and are not retried.
 - **`claude` runner (`runner.go`):** the `exec.CommandContext` run wrapped in a
   bounded `retry.Do` (`MaxAttempts` 2) with `transientClaude` — the "claude
   transport" half of the hybrid.
@@ -153,10 +167,11 @@ re-run could double a side effect is not, so those are deliberately excluded:
   `clone` — safe to repeat (a re-push of the same commits is a no-op; a duplicate
   identical comment only happens if the *first* call actually succeeded but its
   response was lost, an accepted rare cost).
-- `OpenPR` — retried only on a transport error *before* GitHub created the PR; if a
-  create partially succeeded, the classifier sees a non-transient `422`
-  ("A pull request already exists") and stops. (Implementation note for the plan:
-  confirm go-github surfaces the already-exists case as a non-retryable `422`.)
+- `OpenPR` — the transport retries a `POST /pulls` only on `429`/`5xx`/transport
+  error. If a create actually succeeded but its response was lost, the retried POST
+  gets a `422` ("A pull request already exists"), which the classifier treats as
+  non-retryable and returns — go-github then surfaces it as an error to the worker,
+  same as today. No double-PR.
 - The **paid model turns** are never wrapped by the phase-level retry — only the
   `claude` runner's own conservative pre-work transport retry touches them, and that
   path is defined to run only when no work has happened.
@@ -182,10 +197,11 @@ retry:
 The `claude` transport cap lives under the existing `claude` section
 (`max_transport_retries`, env `WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES`).
 
-`retry.*` is **reload-safe** — it is stateless and read per-call — so it joins the
-`wazir serve` live-reload safe subset alongside `claude.*`. (The impls read the
-current policy via an atomically-swappable holder, mirroring
-`maxBrainstormTurns`.) A nice-to-have, not required for the slice to ship.
+`retry.*` is **reload-safe** — it is stateless and read per-call. The
+`retryTransport` holds the policy in an `atomic.Pointer[retry.Policy]`; `serve`'s
+reload swaps it, mirroring `maxBrainstormTurns`. This joins the live-reload safe
+subset alongside `claude.*`. A nice-to-have, not required for the slice to ship — if
+cut, the policy is read once at startup and the transport holds it by value.
 
 ## Lock-TTL interaction (a constraint, not a feature)
 
@@ -211,11 +227,13 @@ commits to **not making it worse**.
   exhausts and returns the last error with attempt count; honors `ctx` cancel
   mid-backoff; `retryAfter` overrides the computed delay; jitter stays within
   `[0, computed]`. Injected jitter/clock, no real sleeps beyond tiny bounds.
-- **`board/github`:** `httptest` returning `503` twice then `200` → one
-  `PostComment` succeeds in 3 attempts; a `422` → no retry, immediate error; a
-  `RateLimitError` → next delay respects the reset.
+- **`githubauth` transport:** a stub `http.RoundTripper` returning `503` twice then
+  `200` → the wrapped transport makes 3 round-trips and returns `200`; a `422` → one
+  round-trip, no retry; a `429` with `Retry-After: 1` → the next delay respects the
+  header; a `POST` body is rewound and re-sent intact on the retry.
 - **`forge/github`:** stub `git` (existing exec-stub pattern) to exit with a
-  transient stderr once then succeed; a merge-conflict stderr → no retry.
+  transient stderr once then succeed; a merge-conflict stderr → no retry; a local
+  (`auth == false`) op is never retried.
 - **`claude`:** fake `claude` binary that fails to spawn / prints an
   `overloaded_error` once then succeeds → retried; a model-reported `is_error` →
   **not** retried.
@@ -224,10 +242,19 @@ commits to **not making it worse**.
 
 ## Files touched (anticipated)
 
-- **New:** `internal/retry/retry.go` + `retry_test.go`.
-- `internal/board/github/board.go`, `projects_gql.go` (+ tests) — classifier + wraps.
-- `internal/forge/github/forge.go`, `git.go` (+ tests) — classifier + wraps.
-- `internal/claude/runner.go` (+ tests) — conservative transport retry.
-- `internal/config/config.go` (+ tests) — `retry` section + `claude.max_transport_retries`.
-- `cmd/wazir/serve.go` — wire the policy in; add `retry.*` to the reload safe subset.
+- **New:** `internal/retry/retry.go` + `retry_test.go` (the leaf helper).
+- **New:** `internal/githubauth/transport.go` + `transport_test.go` — the retrying
+  `http.RoundTripper` + HTTP-status classifier; `New` wraps the ghinstallation
+  transport with it.
+- `internal/forge/github/git.go` (+ `git_test.go`) — `transientGit` classifier +
+  retry around the `gitRunner.run` network path.
+- `internal/claude/runner.go` (+ `runner_test.go`) — `transientClaude` + conservative
+  transport retry.
+- `internal/config/config.go` (+ `config_test.go`) — `retry` section +
+  `claude.max_transport_retries`.
+- `cmd/wazir/serve.go` — build the policy from config, pass it to `githubauth.New`;
+  add `retry.*` to the reload safe subset (swap the transport's `atomic.Pointer`).
 - `wazir.example.yaml`, `CLAUDE.md` — document the new section + behavior.
+
+No edits to `internal/board/github/board.go` / `projects_gql.go` / `forge.go` (they
+inherit HTTP retry through the shared client) and none to `internal/orchestrator`.
