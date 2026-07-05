@@ -26,11 +26,14 @@ func TestHealthGETBody(t *testing.T) {
 	}
 }
 
-func TestHealthRejectsNonGET(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	Health(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /healthz = %d, want 405", rec.Code)
+func TestHealthRejectsNonGetHead(t *testing.T) {
+	// GET and HEAD are the allowed liveness methods; every other verb must be 405.
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		req := httptest.NewRequest(m, "/healthz", nil)
+		rec := httptest.NewRecorder()
+		Health(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /healthz = %d, want 405", m, rec.Code)
+		}
 	}
 }
