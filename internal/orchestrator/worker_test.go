@@ -24,6 +24,7 @@ type scriptedBrain struct {
 	brainstormCalls        int    // how many times Brainstorm was invoked
 	lastExecPlanPath       string // records the PlanPath the last Execute call received
 	lastBrainstormRepoPath string // records the RepoPath the last Brainstorm call received
+	lastReworkInstruction  string // records the Instruction the last Rework call received
 }
 
 func (s *scriptedBrain) Brainstorm(ctx context.Context, in BrainstormInput) (BrainstormResult, error) {
@@ -57,6 +58,7 @@ func (s *scriptedBrain) Rework(ctx context.Context, in ReworkInput) (ReworkResul
 	if s.err != nil {
 		return ReworkResult{}, s.err
 	}
+	s.lastReworkInstruction = in.Instruction
 	r := s.rework[0]
 	s.rework = s.rework[1:]
 	return r, nil

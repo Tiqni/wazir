@@ -71,6 +71,7 @@ type ReworkInput struct {
 	Feedback      forge.ReviewFeedback
 	FailingChecks []string
 	Annotations   []forge.CheckAnnotation
+	Instruction   string // human's directed fix ("use a mutex here"); empty for a bare rework
 }
 type ReworkResult struct {
 	Status PhaseStatus // StatusComplete | StatusFailed
