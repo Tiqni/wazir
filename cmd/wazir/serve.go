@@ -180,6 +180,7 @@ func runServe(ctx context.Context, addr string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", server.New(b, st, q, logger))
+	mux.HandleFunc("/healthz", server.Health)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
