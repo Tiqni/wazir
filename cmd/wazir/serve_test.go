@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/EmadMokhtar/wazir/internal/config"
+)
 
 func TestServeCmdHasAddrFlag(t *testing.T) {
 	cmd := newServeCmd()
@@ -23,4 +28,15 @@ func TestRootRegistersServe(t *testing.T) {
 		}
 	}
 	t.Error("root command tree is missing 'serve'")
+}
+
+func TestRetryChangeIsNotRestartOnly(t *testing.T) {
+	base := config.Config{}
+	base.Retry = config.RetryConfig{MaxAttempts: 4, BaseDelay: 500 * time.Millisecond, MaxDelay: 8 * time.Second}
+	next := base
+	next.Retry.MaxAttempts = 9 // a retry change must be hot-reloadable, not restart-only
+
+	if d := restartOnlyChanged(base, next); d != "" {
+		t.Fatalf("retry change flagged restart-only: %q", d)
+	}
 }

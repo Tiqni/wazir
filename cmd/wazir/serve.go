@@ -147,6 +147,7 @@ func runServe(ctx context.Context, addr string) error {
 					brain.Reload(newCfg.Claude)
 					b.Reload(newCfg.Repos, newCfg.BotLogin, newCfg.GitHub.WebhookSecret)
 					worker.SetMaxBrainstormTurns(newCfg.Claude.MaxBrainstormTurns)
+					auth.SetRetryPolicy(githubauth.PolicyFromConfig(newCfg))
 					logger.Info("config reloaded")
 				},
 				func(err error) { logger.Warn("config reload failed; keeping current config", zap.Error(err)) },
