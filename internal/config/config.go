@@ -45,7 +45,7 @@ type ClaudeConfig struct {
 	ReworkCommand       string        `fig:"rework_command" default:"@wazir fix"`                     // WAZIR_CLAUDE_REWORK_COMMAND — PR-comment trigger token
 	ReworkTimeout       time.Duration `fig:"rework_timeout"`                                          // WAZIR_CLAUDE_REWORK_TIMEOUT — 0 => ExecuteTimeout
 	ReworkAllowedTools  string        `fig:"rework_allowed_tools"`                                    // WAZIR_CLAUDE_REWORK_ALLOWED_TOOLS — "" => ExecuteAllowedTools
-	MaxTransportRetries int           `fig:"max_transport_retries" default:"2"` // WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES — conservative claude-transport retry cap (restart-only)
+	MaxTransportRetries int           `fig:"max_transport_retries" default:"2"` // WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES — TOTAL claude-transport attempts incl. the first (2 = one retry); conservative, restart-only
 }
 
 // ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).

@@ -58,7 +58,7 @@ claude:
   max_rework_rounds: 3           # phase-2 rework cost breaker (attempts per card, then escalate)
   rework_command: "@wazir fix"   # PR-comment token a human uses to trigger a rework
   # rework_timeout / rework_allowed_tools default to the execute_* values if unset.
-  max_transport_retries: 2   # conservative claude-transport retry cap; restart-only (WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES)
+  max_transport_retries: 2   # TOTAL claude-transport attempts incl. the first (2 = one retry); restart-only (WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES)
 
 # Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
 # each in-flight card gets its own worktree. Auth uses a fresh App installation

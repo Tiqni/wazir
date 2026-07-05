@@ -64,3 +64,16 @@ func TestNewHonorsExplicitGitRetryPolicy(t *testing.T) {
 		t.Fatalf("New must keep an explicit RetryPolicy; got %+v", f.git.policy)
 	}
 }
+
+func TestNewFillsMissingDelayFields(t *testing.T) {
+	// A caller sets MaxAttempts but leaves the delays zero: New must fill them so
+	// retry.Backoff doesn't return 0 (a tight, no-backoff loop).
+	f := New(nil, Options{RetryPolicy: retry.Policy{MaxAttempts: 3}})
+	if f.git.policy.MaxAttempts != 3 {
+		t.Fatalf("MaxAttempts must be preserved; got %d", f.git.policy.MaxAttempts)
+	}
+	if f.git.policy.BaseDelay <= 0 || f.git.policy.MaxDelay <= 0 {
+		t.Fatalf("New must fill missing delay fields; got BaseDelay=%v MaxDelay=%v",
+			f.git.policy.BaseDelay, f.git.policy.MaxDelay)
+	}
+}

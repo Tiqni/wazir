@@ -126,6 +126,24 @@ func (errTimeout) Error() string   { return "i/o timeout" }
 func (errTimeout) Timeout() bool   { return true }
 func (errTimeout) Temporary() bool { return true }
 
+func TestRoundTripReturnsOpenBodyWhenUnrewindable(t *testing.T) {
+	// A retryable 503 on a request whose body cannot be rewound (GetBody nil):
+	// the transport must stop and return THAT response with its body still
+	// readable, not a closed one, and must not attempt a second round-trip.
+	inner := &stubRT{steps: []func(*http.Request) (*http.Response, error){resp(503, nil)}}
+	rt := newRetryTransport(inner, fastPolicy())
+	req := newReq(t, "POST", []byte("payload"))
+	req.GetBody = nil // force unrewindable
+	r, err := rt.RoundTrip(req)
+	if err != nil || r == nil || r.StatusCode != 503 || inner.calls != 1 {
+		t.Fatalf("status=%v calls=%d err=%v, want the 503 after exactly 1 round-trip", r, inner.calls, err)
+	}
+	b, readErr := io.ReadAll(r.Body)
+	if readErr != nil || string(b) != "body" {
+		t.Fatalf("response body must still be open/readable; got %q err=%v", string(b), readErr)
+	}
+}
+
 func newReq(t *testing.T, method string, body []byte) *http.Request {
 	t.Helper()
 	var r *http.Request

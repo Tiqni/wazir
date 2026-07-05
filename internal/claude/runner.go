@@ -29,7 +29,8 @@ type Runner struct {
 }
 
 // transportBaseDelay is the base backoff between claude transport retries.
-// A package var so tests can shrink it. Real default is set in Run.
+// Its value (2s) is this initializer; Run reads it directly. A package var so
+// tests can shrink it.
 var transportBaseDelay = 2 * time.Second
 
 // RunSpec is one invocation's inputs.
@@ -116,7 +117,9 @@ func transientClaude(res RunResult, err error) bool {
 		return false
 	}
 	s := strings.ToLower(err.Error())
-	if strings.Contains(s, "timed out") || strings.Contains(s, "cancelled") {
+	// "cancel" matches both spellings ("cancelled" and Go's own "context
+	// canceled") plus "canceling"; the errors.Is check above is the primary guard.
+	if strings.Contains(s, "timed out") || strings.Contains(s, "cancel") {
 		return false
 	}
 	for _, p := range []string{

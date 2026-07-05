@@ -447,6 +447,11 @@ func TestTransientClaudeClassifier(t *testing.T) {
 	if transientClaude(RunResult{}, fmt.Errorf("some wrapper: %w", context.DeadlineExceeded)) {
 		t.Error("a wrapped DeadlineExceeded must NOT be transient")
 	}
+	// The string fallback must match Go's own single-l "canceled" spelling, not
+	// just "cancelled" (for an unwrapped error that doesn't carry the sentinel).
+	if transientClaude(RunResult{}, errors.New("boom: context canceled")) {
+		t.Error("an unwrapped \"context canceled\" must NOT be transient")
+	}
 }
 
 func TestRunnerRetriesTransportFailure(t *testing.T) {

@@ -51,10 +51,18 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		if attempt > 1 && req.Body != nil {
-			// Rewind the body for the retry. net/http sets GetBody for the
-			// in-memory bodies go-github/githubv4 send; without it we cannot
-			// safely re-send, so stop and return what we last had.
+		resp, err = rt.inner.RoundTrip(req)
+		ok, retryAfter := classifyHTTPResponse(resp, err)
+		if !ok || attempt == attempts {
+			return resp, err
+		}
+		// We intend to retry. Rewind the request body for the next attempt
+		// BEFORE draining/closing this response, so that if the body can't be
+		// rewound we hand the caller this response with its body still OPEN and
+		// readable — not one we already closed. net/http sets GetBody for the
+		// in-memory bodies go-github/githubv4 send; a nil GetBody means we
+		// cannot safely re-send, so we stop and return this response.
+		if req.Body != nil {
 			if req.GetBody == nil {
 				return resp, err
 			}
@@ -63,11 +71,6 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				return resp, err
 			}
 			req.Body = body
-		}
-		resp, err = rt.inner.RoundTrip(req)
-		ok, retryAfter := classifyHTTPResponse(resp, err)
-		if !ok || attempt == attempts {
-			return resp, err
 		}
 		if resp != nil { // drain so the connection can be reused, then discard
 			_, _ = io.Copy(io.Discard, resp.Body)

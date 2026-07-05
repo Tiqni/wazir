@@ -57,6 +57,16 @@ func New(rest *github.Client, opts Options) *GitHubForge {
 	if policy.MaxAttempts < 1 {
 		policy = defaultGitRetryPolicy
 	}
+	// Fill missing delay fields too: a caller may set MaxAttempts but leave the
+	// delays zero, and a zero BaseDelay makes retry.Backoff return 0 — a tight,
+	// no-backoff retry loop. Default each independently so partial policies still
+	// back off.
+	if policy.BaseDelay <= 0 {
+		policy.BaseDelay = defaultGitRetryPolicy.BaseDelay
+	}
+	if policy.MaxDelay <= 0 {
+		policy.MaxDelay = defaultGitRetryPolicy.MaxDelay
+	}
 	return &GitHubForge{
 		rest:         rest,
 		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken, policy: policy},
