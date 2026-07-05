@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -397,4 +398,72 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// countingClaude writes a fake `claude` that exits non-zero with a chosen stderr
+// on its first failFirst calls, then prints a success envelope. Counts via a
+// marker file.
+func countingClaude(t *testing.T, failFirst int, failStderr, okText string) string {
+	t.Helper()
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\n" +
+		"n=$(cat '" + countPath + "' 2>/dev/null || echo 0)\n" +
+		"n=$((n+1)); echo $n > '" + countPath + "'\n" +
+		"if [ \"$n\" -le " + fmt.Sprint(failFirst) + " ]; then\n" +
+		"  echo '" + failStderr + "' >&2; exit 1\n" +
+		"fi\n" +
+		"cat <<'EOF'\n" + envelope(okText, false, "success") + "\nEOF\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTransientClaudeClassifier(t *testing.T) {
+	// No work happened (empty result) + a transport-ish error => retry.
+	if !transientClaude(RunResult{}, errors.New("claude exec: exec: \"claude\": executable file not found in $PATH")) {
+		t.Error("spawn failure must be transient")
+	}
+	if !transientClaude(RunResult{}, errors.New("claude exec: exit status 1 (stderr: overloaded_error 529)")) {
+		t.Error("overloaded 529 with no work must be transient")
+	}
+	// Work happened / model-reported outcome => never retry.
+	if transientClaude(RunResult{IsError: true, Subtype: "error_during_execution", SessionID: "s1"}, errors.New("claude reported failure")) {
+		t.Error("a model-reported failure must NOT be transient")
+	}
+	if transientClaude(RunResult{Text: "partial"}, errors.New("claude exec: overloaded")) {
+		t.Error("any produced result means work happened; must NOT retry")
+	}
+	// A timeout is not retried (work likely ran the full duration).
+	if transientClaude(RunResult{}, errors.New("claude timed out after 5m")) {
+		t.Error("timeout must NOT be transient")
+	}
+	if transientClaude(RunResult{}, nil) {
+		t.Error("nil error must NOT be transient")
+	}
+}
+
+func TestRunnerRetriesTransportFailure(t *testing.T) {
+	oldDelay := transportBaseDelay
+	transportBaseDelay = time.Millisecond
+	defer func() { transportBaseDelay = oldDelay }()
+
+	bin := countingClaude(t, 1, "overloaded_error 529", "recovered")
+	r := &Runner{bin: bin, log: zap.NewNop(), maxTransportRetries: 2}
+	res, err := r.Run(context.Background(), RunSpec{Prompt: "hi"})
+	if err != nil || res.Text != "recovered" {
+		t.Fatalf("res=%+v err=%v, want a retry then success", res, err)
+	}
+}
+
+func TestRunnerDoesNotRetryModelFailure(t *testing.T) {
+	// is_error=true is a real turn outcome; runOnce returns a populated result +
+	// error, so Run must return immediately without a second invocation.
+	bin := writeFakeClaude(t, envelope("boom", true, "error_during_execution"), 0, 0)
+	r := &Runner{bin: bin, log: zap.NewNop(), maxTransportRetries: 3}
+	if _, err := r.Run(context.Background(), RunSpec{Prompt: "hi"}); err == nil {
+		t.Fatal("want the model-reported failure surfaced")
+	}
 }

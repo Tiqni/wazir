@@ -16,13 +16,20 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 // Runner executes one headless `claude` invocation and returns the result event.
 type Runner struct {
-	bin string
-	log *zap.Logger
+	bin                 string
+	log                 *zap.Logger
+	maxTransportRetries int // conservative pre-work transport retry cap (restart-only)
 }
+
+// transportBaseDelay is the base backoff between claude transport retries.
+// A package var so tests can shrink it. Real default is set in Run.
+var transportBaseDelay = 2 * time.Second
 
 // RunSpec is one invocation's inputs.
 type RunSpec struct {
@@ -63,10 +70,65 @@ type resultEvent struct {
 	DurationMS   int     `json:"duration_ms"`
 }
 
-// Run builds the claude command, executes it with a timeout, and parses stdout.
-// It fails loudly on exec error, timeout, unparseable output, or a CLI-reported
-// failure (the §12 CLI-drift guard).
+// Run executes a headless claude invocation. It retries only conservative
+// TRANSPORT failures that happened before any work (process spawn failure, an
+// overload/529 with no session or result) up to maxTransportRetries; a
+// model-reported failure (is_error / non-success subtype) is returned as-is.
 func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
+	attempts := r.maxTransportRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+	policy := retry.Policy{MaxAttempts: attempts, BaseDelay: transportBaseDelay, MaxDelay: 10 * time.Second}
+	var res RunResult
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		res, err = r.runOnce(ctx, spec)
+		if err == nil || attempt == attempts || !transientClaude(res, err) {
+			return res, err
+		}
+		r.log.Warn("claude transport failure; retrying", zap.Int("attempt", attempt), zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(retry.Backoff(policy, attempt)):
+		}
+	}
+	return res, err
+}
+
+// transientClaude is deliberately conservative: it retries ONLY when no paid
+// work happened (empty result envelope) AND the error looks like a spawn or
+// pre-work overload/connection failure. Any produced result, is_error, or
+// subtype means the turn ran — never retry (cost + partial side effects). A
+// timeout is treated as work, not transport, so it is not retried.
+func transientClaude(res RunResult, err error) bool {
+	if err == nil {
+		return false
+	}
+	if res.SessionID != "" || res.Text != "" || res.IsError || res.Subtype != "" {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "timed out") || strings.Contains(s, "cancelled") {
+		return false
+	}
+	for _, p := range []string{
+		"file not found", "exec format", "permission denied",
+		"overloaded", "api_error", "529",
+		"connection reset", "connection refused",
+	} {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// runOnce builds the claude command, executes it with a timeout, and parses
+// stdout. It fails loudly on exec error, timeout, unparseable output, or a
+// CLI-reported failure (the §12 CLI-drift guard).
+func (r *Runner) runOnce(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if spec.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, spec.Timeout)
