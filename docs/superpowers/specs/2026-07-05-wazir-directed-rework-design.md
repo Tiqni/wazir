@@ -92,11 +92,12 @@ The two must be framed distinctly:
 - `reworkPrompt` renders the instruction in its own top section, `## Requested change`, above the
   existing `## Review summary` / `## Inline review comments` / `## Failing checks` / `## CI annotations`
   data sections. Omitted entirely when the instruction is empty.
-- `reworkSystemPrompt` gains one sentence: a human operator may supply a *requested change* to address
-  together with the review feedback; follow it for the code changes. The **hard rails remain absolute**
-  regardless of the instruction's content: commit only on the current branch, do not push, do not change
-  the remote or create branches, do not use interactive tools, never expose secrets. The PR feedback
-  stays framed as untrusted data.
+- `reworkSystemPrompt` gains one sentence, added **only when an instruction is present** (so a bare
+  `@wazir fix` keeps a byte-identical system prompt, per decision #1): a human operator may supply a
+  *requested change* to address together with the review feedback; follow it for the code changes. The
+  **hard rails remain absolute** regardless of the instruction's content: commit only on the current
+  branch, do not push, do not change the remote or create branches, do not use interactive tools, never
+  expose secrets. The PR feedback stays framed as untrusted data.
 
 Trust rationale: because the directed form is gated to `OWNER`/`MEMBER`/`COLLABORATOR` (§1), treating the
 instruction as a directive rather than untrusted data is justified — while the rails still bound what any
