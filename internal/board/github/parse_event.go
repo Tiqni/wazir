@@ -190,9 +190,13 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 		if !b.repoAllowed(rl, repo) {
 			return board.Event{Kind: board.EventIgnore}, nil
 		}
-		if rl.botLogin != "" && e.GetSender().GetLogin() == rl.botLogin {
-			return board.Event{Kind: board.EventIgnore}, nil
-		}
+		// No bot-sender filter here (unlike comments/moves). GitHub attributes a
+		// check_suite to the actor that pushed the head branch, and Wazir always
+		// pushes the PR branch itself — so a CI completion on our own PR carries
+		// sender == bot_login. Dropping it would suppress the exact signal PR-watch
+		// exists to observe. Loop safety instead comes from reportPhase's delta gating
+		// (it only comments/moves on an actual review or CI-conclusion change) plus the
+		// rework-round cap; a CI completion never re-triggers itself.
 		prs := e.GetCheckSuite().PullRequests
 		if len(prs) == 0 {
 			return board.Event{Kind: board.EventIgnore}, nil
