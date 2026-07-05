@@ -252,6 +252,31 @@ func TestParseCheckSuiteCompleted(t *testing.T) {
 	}
 }
 
+func TestParseCheckSuiteBotSenderStillReports(t *testing.T) {
+	// A check_suite on Wazir's own PR carries sender == bot_login: GitHub attributes
+	// the suite to the actor that pushed the head branch, and Wazir always pushes the
+	// PR branch itself. The bot-sender loop filter (correct for comments/moves the bot
+	// emits) must NOT drop CI here — a finished check run is exactly the external signal
+	// PR-watch exists to observe. Loop safety comes from reportPhase's delta gating and
+	// the rework cap, not from filtering the sender. Regression guard for the observe path.
+	b := newParserWithStore(t)
+	payload := []byte(`{"action":"completed",` +
+		`"check_suite":{"conclusion":"failure","pull_requests":[{"number":9}]},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"wazir-bot"}}`)
+	h := headersFor("check_suite", "d-ci-bot", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventChecksCompleted {
+		t.Errorf("Kind = %v, want EventChecksCompleted (bot-sender CI must be observed, not dropped)", ev.Kind)
+	}
+	if ev.CardID != "ISSUE_NODE_1" || ev.Repo != "octocat/hello" || ev.Dedup != "d-ci-bot" {
+		t.Errorf("event = %+v", ev)
+	}
+}
+
 func TestParsePullRequestReviewCommentedIgnored(t *testing.T) {
 	b := newParserWithStore(t)
 	// A plain "commented" review is not decision-grade -> ignored.
