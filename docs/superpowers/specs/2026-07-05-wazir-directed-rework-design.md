@@ -75,10 +75,12 @@ The existing bot/self filter (`isBot`) and the `reworkCommand == ""` guard run f
 
 - `board.Event` gains `Instruction string` — domain vocabulary (a human's requested change), populated
   only by the rework path; nil/empty everywhere else. No provider concepts leak.
-- `orchestrator.Decision` gains `Instruction string`. The resolver copies `ev.Instruction` when it
-  returns `ActRework`. For the column-move-triggered rework path the field is empty (correct — no text),
-  so unconditionally copying `ev.Instruction` is safe.
-- `Worker.execute` already receives the `Decision`, so it calls `reworkPhase(ctx, card, d.Instruction)`.
+- `Worker.Process` already holds the raw `ev`, so it threads `ev.Instruction` into `execute`, which
+  passes it to `reworkPhase(ctx, card, instruction)` in the `ActRework` branch. The `Resolver` stays a
+  pure `(phase, event) → Action` mapper — **not** widened — so every existing `Decision{...}` literal is
+  untouched. The instruction is data carried alongside the decision, not part of it; `execute` uses it
+  only in the `ActRework` case, so it is naturally ignored for every other action. For the
+  column-move-triggered rework the instruction is empty (correct — that path has no text).
 - `orchestrator.ReworkInput` gains `Instruction string`; `reworkPhase` passes it through.
 
 ### 3. Prompt framing (`internal/claude/brain.go`)
@@ -139,10 +141,9 @@ issue_comment webhook ("@wazir-tiqni fix use a mutex")
 ## Files touched
 
 - `internal/board/board.go` — add `Event.Instruction`.
-- `internal/board/github/parse_event.go` — extract instruction, author-association gate.
-- `internal/orchestrator/decision.go` — add `Decision.Instruction`.
-- `internal/orchestrator/resolver.go` — copy `ev.Instruction` on `ActRework`.
+- `internal/board/github/parse_event.go` — extract instruction, author-association gate, helpers.
 - `internal/orchestrator/brain.go` — add `ReworkInput.Instruction`.
-- `internal/orchestrator/worker.go` — thread instruction into `reworkPhase`; directed-variant ack.
+- `internal/orchestrator/worker.go` — thread `ev.Instruction` through `execute` into `reworkPhase`;
+  directed-variant ack.
 - `internal/claude/brain.go` — `reworkPrompt` section + `reworkSystemPrompt` sentence.
 - Tests alongside each.
