@@ -116,8 +116,8 @@ issue_comment webhook ("@wazir-tiqni fix use a mutex")
   └─ github.ParseEvent
        ├─ command matches, author_association ∈ {OWNER,MEMBER,COLLABORATOR}
        └─ Event{Kind: EventReworkRequested, Instruction: "use a mutex"}
-  └─ Resolver.Resolve → Decision{ActRework, Instruction: "use a mutex"}
-  └─ Worker.execute → reworkPhase(ctx, card, "use a mutex")
+  └─ Resolver.Resolve → Decision{ActRework}          (instruction rides alongside, not on Decision)
+  └─ Worker.Process threads ev.Instruction → execute → reworkPhase(ctx, card, "use a mutex")
        ├─ gather PR feedback + failing checks + CI annotations (unchanged)
        └─ brain.Rework(ReworkInput{..., Instruction: "use a mutex"})
             └─ reworkPrompt renders "## Requested change\n\nuse a mutex" above the feedback sections

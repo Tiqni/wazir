@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
@@ -476,6 +477,48 @@ func TestParsePRCommentDirectedTrimsAndKeepsCasing(t *testing.T) {
 	}
 	if ev.Instruction != "Use a Mutex here" {
 		t.Errorf("Instruction = %q, want %q (trimmed, original casing)", ev.Instruction, "Use a Mutex here")
+	}
+}
+
+func TestParsePRCommentDirectedMultibytePrefixExtractsCorrectly(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// A multibyte uppercase char before the token whose ToLower changes byte length
+	// must not misalign the slice offset (regression: silent mis-extraction).
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":563,"body":"İ @wazir fix make it faster","user":{"login":"alice"},"author_association":"OWNER"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-mb1", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Fatalf("Kind = %v, want EventReworkRequested", ev.Kind)
+	}
+	if ev.Instruction != "make it faster" {
+		t.Errorf("Instruction = %q, want %q", ev.Instruction, "make it faster")
+	}
+}
+
+func TestParsePRCommentDirectedMultibytePrefixDoesNotPanic(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// U+023A (Ⱥ, 2 bytes) lowercases to U+2C65 (ⱥ, 3 bytes); a long prefix of it once
+	// drove the lowercased-body index past len(body) → slice out of range.
+	body := strings.Repeat("Ⱥ", 20) + "@wazir fix do the thing"
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":564,"body":"` + body + `","user":{"login":"alice"},"author_association":"OWNER"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-mb2", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested || ev.Instruction != "do the thing" {
+		t.Errorf("event = %+v, want EventReworkRequested with Instruction %q", ev, "do the thing")
 	}
 }
 

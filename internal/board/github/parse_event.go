@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -241,14 +242,19 @@ func prNumberFromCommentEvent(e *github.IssueCommentEvent) int {
 
 // reworkInstruction returns the trimmed text following the first case-insensitive
 // occurrence of the rework command token in body — the human's requested change.
-// Empty means a bare command (feedback-only rework). The command token is ASCII
-// (e.g. "@wazir fix"), so the lowercased-body index is a valid byte offset here.
+// Empty means a bare command (feedback-only rework). The match runs against the
+// ORIGINAL body (never a lowercased copy), so a multibyte character before the
+// token can never misalign the byte offset used to slice the trailing text.
 func reworkInstruction(body, command string) string {
-	i := strings.Index(strings.ToLower(body), strings.ToLower(command))
-	if i < 0 {
+	re, err := regexp.Compile("(?i)" + regexp.QuoteMeta(command))
+	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(body[i+len(command):])
+	loc := re.FindStringIndex(body)
+	if loc == nil {
+		return ""
+	}
+	return strings.TrimSpace(body[loc[1]:])
 }
 
 // trustedAssociation reports whether a comment author's GitHub author_association
