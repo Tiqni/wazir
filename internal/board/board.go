@@ -93,6 +93,10 @@ type Event struct {
 	NewPhase Phase
 	Signal   ApprovalSignal
 	Dedup    string // provider delivery id for idempotency
+	// Instruction is a human's free-text rework directive ("use a mutex here"),
+	// carried only on EventReworkRequested. Empty means a bare `fix` command
+	// (feedback-only rework).
+	Instruction string
 }
 
 // BoardSpec describes a desired board for provisioning.
