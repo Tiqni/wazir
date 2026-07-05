@@ -2,10 +2,16 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 func TestAuthConfigEnvBuildsExtraHeader(t *testing.T) {
@@ -66,5 +72,81 @@ func TestRunPropagatesTokenError(t *testing.T) {
 	g := gitRunner{bin: "git", token: func(context.Context) (string, error) { return "", fmt.Errorf("mint failed") }}
 	if _, err := g.run(context.Background(), "", true, "--version"); err == nil || !strings.Contains(err.Error(), "mint failed") {
 		t.Fatalf("want the mint error surfaced, got %v", err)
+	}
+}
+
+// countingGit writes a fake `git` that fails transiently on its first N calls
+// (printing a network-looking stderr, exit 1) then succeeds. It counts via a
+// marker file so the count survives across processes.
+func countingGit(t *testing.T, failFirst int) (bin string, countPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	countPath = filepath.Join(dir, "count")
+	bin = filepath.Join(dir, "git")
+	script := "#!/bin/sh\n" +
+		"n=$(cat '" + countPath + "' 2>/dev/null || echo 0)\n" +
+		"n=$((n+1)); echo $n > '" + countPath + "'\n" +
+		"if [ \"$n\" -le " + fmt.Sprint(failFirst) + " ]; then\n" +
+		"  echo \"fatal: unable to access 'https://x/': Could not resolve host: x\" >&2; exit 128\n" +
+		"fi\n" +
+		"echo ok\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, countPath
+}
+
+func TestTransientGitClassifier(t *testing.T) {
+	yes := []string{
+		"git push: exit 128 (stderr: fatal: unable to access 'https://x': Could not resolve host: x)",
+		"stderr: Connection timed out",
+		"stderr: the remote end hung up unexpectedly",
+		"stderr: fatal: unable to access: The requested URL returned error: 503",
+	}
+	for _, s := range yes {
+		if !transientGit(errors.New(s)) {
+			t.Errorf("want transient: %q", s)
+		}
+	}
+	no := []string{
+		"stderr: CONFLICT (content): Merge conflict in a.go",
+		"stderr: ! [rejected] main -> main (non-fast-forward)",
+		"stderr: nothing to commit, working tree clean",
+	}
+	for _, s := range no {
+		if transientGit(errors.New(s)) {
+			t.Errorf("want NOT transient: %q", s)
+		}
+	}
+	if transientGit(nil) {
+		t.Error("nil must not be transient")
+	}
+}
+
+func TestRunRetriesTransientNetworkOp(t *testing.T) {
+	bin, _ := countingGit(t, 2) // fail twice, succeed on the 3rd
+	g := gitRunner{
+		bin:    bin,
+		token:  func(context.Context) (string, error) { return "tok", nil },
+		policy: retry.Policy{MaxAttempts: 4, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond},
+	}
+	out, err := g.run(context.Background(), "", true, "push", "origin", "b")
+	if err != nil || out != "ok" {
+		t.Fatalf("out=%q err=%v, want ok/nil after retries", out, err)
+	}
+}
+
+func TestRunDoesNotRetryLocalOp(t *testing.T) {
+	bin, countPath := countingGit(t, 5) // always fails within the test's attempts
+	g := gitRunner{
+		bin:    bin,
+		token:  func(context.Context) (string, error) { return "tok", nil },
+		policy: retry.Policy{MaxAttempts: 4, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	}
+	if _, err := g.run(context.Background(), "", false, "worktree", "prune"); err == nil {
+		t.Fatal("want an error; a local op must not retry")
+	}
+	if b, _ := os.ReadFile(countPath); strings.TrimSpace(string(b)) != "1" {
+		t.Fatalf("local op ran %s times, want exactly 1 (no retry)", strings.TrimSpace(string(b)))
 	}
 }

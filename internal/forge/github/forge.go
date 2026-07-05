@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-github/v66/github"
 
 	"github.com/EmadMokhtar/wazir/internal/forge"
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 // Options configures the local git layout + auth for the GitHub forge.
@@ -21,6 +22,7 @@ type Options struct {
 	Base         string
 	GitToken     func(ctx context.Context) (string, error) // installation token per network op; nil = no auth header
 	RemoteURL    func(repo string) string                  // optional; defaults to https://github.com/<repo>.git
+	RetryPolicy  retry.Policy                              // bounded backoff for network git ops (clone/fetch/push)
 }
 
 // GitHubForge implements forge.CodeForge.
@@ -46,7 +48,7 @@ func New(rest *github.Client, opts Options) *GitHubForge {
 	}
 	return &GitHubForge{
 		rest:         rest,
-		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken},
+		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken, policy: opts.RetryPolicy},
 		cloneRoot:    opts.CloneRoot,
 		worktreeRoot: opts.WorktreeRoot,
 		base:         opts.Base,

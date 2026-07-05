@@ -8,6 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 // gitRunner execs `git` with a curated env. The token is injected as an
@@ -15,8 +18,9 @@ import (
 // not .git/config, so it never persists). Auth is added only for network ops,
 // and the token is resolved per op so a refreshed installation token is used.
 type gitRunner struct {
-	bin   string
-	token func(ctx context.Context) (string, error)
+	bin    string
+	token  func(ctx context.Context) (string, error)
+	policy retry.Policy // applied to network ops only
 }
 
 // authConfigEnv returns the GIT_CONFIG_* env that injects an Authorization
@@ -46,8 +50,26 @@ func curatedGitEnv() []string {
 
 // run execs `git args...`. dir sets cmd.Dir when non-empty. auth toggles the
 // credential header (a fresh token is resolved from the token source for the op).
-// It fails loudly with stderr on a non-zero exit.
+// For network ops (auth == true) it retries transient failures (host
+// resolution, timeouts, remote 5xx) with bounded backoff; local ops run
+// exactly once. It fails loudly with stderr on a non-zero exit.
 func (g gitRunner) run(ctx context.Context, dir string, auth bool, args ...string) (string, error) {
+	if !auth {
+		return g.runOnce(ctx, dir, auth, args...)
+	}
+	var out string
+	err := retry.Do(ctx, g.policy,
+		func(err error) (bool, time.Duration) { return transientGit(err), 0 },
+		func() error {
+			var e error
+			out, e = g.runOnce(ctx, dir, auth, args...)
+			return e
+		})
+	return out, err
+}
+
+// runOnce is a single git invocation (the former body of run).
+func (g gitRunner) runOnce(ctx context.Context, dir string, auth bool, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, g.bin, args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -68,4 +90,35 @@ func (g gitRunner) run(ctx context.Context, dir string, auth bool, args ...strin
 		return "", fmt.Errorf("git %s: %w (stderr: %s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// transientGit reports whether a git error looks like a retryable network
+// failure (stderr matched case-insensitively). It deliberately excludes logic
+// failures — merge conflicts, non-fast-forward pushes, auth, "nothing to commit".
+func transientGit(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, p := range []string{
+		"could not resolve host",
+		"connection timed out",
+		"connection reset",
+		"connection refused",
+		"operation timed out",
+		"early eof",
+		"the remote end hung up",
+		"rpc failed",
+		"unable to access", // git's curl wrapper for HTTP transport trouble
+		"failed to connect",
+		"gnutls_handshake",
+		"ssl_",
+		"tls",
+		"error: 500", "error: 502", "error: 503", "error: 504",
+	} {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
 }
