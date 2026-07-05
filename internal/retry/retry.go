@@ -73,6 +73,9 @@ func Backoff(p Policy, attempt int) time.Duration {
 	if p.BaseDelay <= 0 {
 		return 0
 	}
+	if attempt < 1 {
+		attempt = 1
+	}
 	d := p.BaseDelay << (attempt - 1) // BaseDelay * 2^(attempt-1)
 	if d <= 0 || d > p.MaxDelay {      // overflow, or over the cap
 		d = p.MaxDelay

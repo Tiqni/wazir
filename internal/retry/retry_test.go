@@ -97,3 +97,24 @@ func TestBackoffCapsAndZeroes(t *testing.T) {
 		t.Errorf("zero policy: got %v want 0", got)
 	}
 }
+
+func TestBackoffGuardsAndOverflow(t *testing.T) {
+	old := jitter
+	jitter = func(d time.Duration) time.Duration { return d } // identity
+	defer func() { jitter = old }()
+
+	p := Policy{BaseDelay: time.Second, MaxDelay: 4 * time.Second}
+
+	// Non-positive attempts should be treated as attempt 1
+	if got := Backoff(p, 0); got != time.Second {
+		t.Errorf("attempt 0: got %v want 1s (guarded to attempt 1)", got)
+	}
+	if got := Backoff(p, -5); got != time.Second {
+		t.Errorf("attempt -5: got %v want 1s (guarded to attempt 1)", got)
+	}
+
+	// High attempt that overflows should be capped at MaxDelay
+	if got := Backoff(p, 64); got != 4*time.Second {
+		t.Errorf("attempt 64 (overflow): got %v want 4s (MaxDelay cap)", got)
+	}
+}
