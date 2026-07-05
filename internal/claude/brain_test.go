@@ -338,6 +338,44 @@ func TestReworkFailedStatusCarriesError(t *testing.T) {
 	}
 }
 
+func TestReworkPromptCarriesDirectedInstruction(t *testing.T) {
+	result := "```json\n{\"phase\":\"rework\",\"status\":\"complete\",\"commits\":[],\"test_summary\":\"ok\",\"notes\":\"\",\"error\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second, ReworkTimeout: 5 * time.Second}, zap.NewNop())
+
+	if _, err := br.Rework(context.Background(), orchestrator.ReworkInput{
+		Transcript:   "t",
+		WorktreePath: t.TempDir(),
+		Feedback:     forge.ReviewFeedback{Summary: "wrap the error"},
+		Instruction:  "use a mutex instead of a channel",
+	}); err != nil {
+		t.Fatalf("Rework: %v", err)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if !strings.Contains(string(args), "Requested change") ||
+		!strings.Contains(string(args), "use a mutex instead of a channel") {
+		t.Errorf("rework prompt must carry the directed instruction under its own heading; args:\n%s", args)
+	}
+}
+
+func TestReworkPromptOmitsSectionWhenNoInstruction(t *testing.T) {
+	result := "```json\n{\"phase\":\"rework\",\"status\":\"complete\",\"commits\":[],\"test_summary\":\"ok\",\"notes\":\"\",\"error\":\"\"}\n```"
+	bin := writeFakeClaude(t, envelope(result, false, "success"), 0, 0)
+	br := New(config.ClaudeConfig{Bin: bin, ExecuteTimeout: 5 * time.Second, ReworkTimeout: 5 * time.Second}, zap.NewNop())
+
+	if _, err := br.Rework(context.Background(), orchestrator.ReworkInput{
+		Transcript:   "t",
+		WorktreePath: t.TempDir(),
+		Feedback:     forge.ReviewFeedback{Summary: "wrap the error"},
+	}); err != nil {
+		t.Fatalf("Rework: %v", err)
+	}
+	args, _ := os.ReadFile(bin + ".args")
+	if strings.Contains(string(args), "Requested change") {
+		t.Errorf("bare rework must not emit a Requested change heading; args:\n%s", args)
+	}
+}
+
 func TestSplitToolsTrimsAndDropsEmpties(t *testing.T) {
 	got := splitTools("Read, Edit ,, Bash(git:*) ")
 	want := []string{"Read", "Edit", "Bash(git:*)"}
