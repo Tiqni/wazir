@@ -104,6 +104,7 @@ func runServe(ctx context.Context, addr string) error {
 		WorktreeRoot: cfg.Forge.WorktreeRoot,
 		Base:         cfg.Forge.BaseBranch,
 		GitToken:     auth.GitToken,
+		RetryPolicy:  githubauth.PolicyFromConfig(cfg),
 	})
 	// plan/execute seed each per-run config dir with a symlink to this plugin registry
 	// + a settings.json enabling the configured plugin, so the Superpowers skills load

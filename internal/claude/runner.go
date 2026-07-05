@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,6 +110,11 @@ func transientClaude(res RunResult, err error) bool {
 	if res.SessionID != "" || res.Text != "" || res.IsError || res.Subtype != "" {
 		return false
 	}
+	// A timed-out or cancelled turn ran to its deadline — never retry (paid work).
+	// Checked via the wrapped sentinel first; the string check below is a fallback.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
 	s := strings.ToLower(err.Error())
 	if strings.Contains(s, "timed out") || strings.Contains(s, "cancelled") {
 		return false
@@ -208,9 +214,9 @@ func (r *Runner) runOnce(ctx context.Context, spec RunSpec) (RunResult, error) {
 	runErr := cmd.Run()
 	switch ctx.Err() {
 	case context.DeadlineExceeded:
-		return RunResult{}, fmt.Errorf("claude timed out after %s (stderr: %s)", spec.Timeout, strings.TrimSpace(stderr.String()))
+		return RunResult{}, fmt.Errorf("claude timed out after %s: %w (stderr: %s)", spec.Timeout, ctx.Err(), strings.TrimSpace(stderr.String()))
 	case context.Canceled:
-		return RunResult{}, fmt.Errorf("claude cancelled (stderr: %s)", strings.TrimSpace(stderr.String()))
+		return RunResult{}, fmt.Errorf("claude cancelled: %w (stderr: %s)", ctx.Err(), strings.TrimSpace(stderr.String()))
 	}
 	if runErr != nil {
 		return RunResult{}, fmt.Errorf("claude exec: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))

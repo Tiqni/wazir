@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v66/github"
+
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 func TestOpenPRPostsCorrectRequest(t *testing.T) {
@@ -44,5 +47,20 @@ func TestOpenPRPostsCorrectRequest(t *testing.T) {
 	}
 	if payload["head"] != "feature/x" || payload["base"] != "main" || payload["title"] != "Add X" {
 		t.Errorf("payload = %+v", payload)
+	}
+}
+
+func TestNewDefaultsGitRetryPolicy(t *testing.T) {
+	f := New(nil, Options{}) // zero RetryPolicy
+	if f.git.policy.MaxAttempts < 2 {
+		t.Fatalf("New must default a zero RetryPolicy to a retrying one; got MaxAttempts=%d", f.git.policy.MaxAttempts)
+	}
+}
+
+func TestNewHonorsExplicitGitRetryPolicy(t *testing.T) {
+	want := retry.Policy{MaxAttempts: 7, BaseDelay: time.Second, MaxDelay: 2 * time.Second}
+	f := New(nil, Options{RetryPolicy: want})
+	if f.git.policy != want {
+		t.Fatalf("New must keep an explicit RetryPolicy; got %+v", f.git.policy)
 	}
 }

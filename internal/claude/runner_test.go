@@ -443,6 +443,10 @@ func TestTransientClaudeClassifier(t *testing.T) {
 	if transientClaude(RunResult{}, nil) {
 		t.Error("nil error must NOT be transient")
 	}
+	// A wrapped context sentinel must be caught even without the magic string.
+	if transientClaude(RunResult{}, fmt.Errorf("some wrapper: %w", context.DeadlineExceeded)) {
+		t.Error("a wrapped DeadlineExceeded must NOT be transient")
+	}
 }
 
 func TestRunnerRetriesTransportFailure(t *testing.T) {
