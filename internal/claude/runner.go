@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,13 +17,21 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 // Runner executes one headless `claude` invocation and returns the result event.
 type Runner struct {
-	bin string
-	log *zap.Logger
+	bin                 string
+	log                 *zap.Logger
+	maxTransportRetries int // conservative pre-work transport retry cap (restart-only)
 }
+
+// transportBaseDelay is the base backoff between claude transport retries.
+// Its value (2s) is this initializer; Run reads it directly. A package var so
+// tests can shrink it.
+var transportBaseDelay = 2 * time.Second
 
 // RunSpec is one invocation's inputs.
 type RunSpec struct {
@@ -63,10 +72,72 @@ type resultEvent struct {
 	DurationMS   int     `json:"duration_ms"`
 }
 
-// Run builds the claude command, executes it with a timeout, and parses stdout.
-// It fails loudly on exec error, timeout, unparseable output, or a CLI-reported
-// failure (the §12 CLI-drift guard).
+// Run executes a headless claude invocation. It retries only conservative
+// TRANSPORT failures that happened before any work (process spawn failure, an
+// overload/529 with no session or result) up to maxTransportRetries; a
+// model-reported failure (is_error / non-success subtype) is returned as-is.
 func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
+	attempts := r.maxTransportRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+	policy := retry.Policy{MaxAttempts: attempts, BaseDelay: transportBaseDelay, MaxDelay: 10 * time.Second}
+	var res RunResult
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		res, err = r.runOnce(ctx, spec)
+		if err == nil || attempt == attempts || !transientClaude(res, err) {
+			return res, err
+		}
+		r.log.Warn("claude transport failure; retrying", zap.Int("attempt", attempt), zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(retry.Backoff(policy, attempt)):
+		}
+	}
+	return res, err
+}
+
+// transientClaude is deliberately conservative: it retries ONLY when no paid
+// work happened (empty result envelope) AND the error looks like a spawn or
+// pre-work overload/connection failure. Any produced result, is_error, or
+// subtype means the turn ran — never retry (cost + partial side effects). A
+// timeout is treated as work, not transport, so it is not retried.
+func transientClaude(res RunResult, err error) bool {
+	if err == nil {
+		return false
+	}
+	if res.SessionID != "" || res.Text != "" || res.IsError || res.Subtype != "" {
+		return false
+	}
+	// A timed-out or cancelled turn ran to its deadline — never retry (paid work).
+	// Checked via the wrapped sentinel first; the string check below is a fallback.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	// "cancel" matches both spellings ("cancelled" and Go's own "context
+	// canceled") plus "canceling"; the errors.Is check above is the primary guard.
+	if strings.Contains(s, "timed out") || strings.Contains(s, "cancel") {
+		return false
+	}
+	for _, p := range []string{
+		"file not found", "exec format", "permission denied",
+		"overloaded", "api_error", "529",
+		"connection reset", "connection refused",
+	} {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// runOnce builds the claude command, executes it with a timeout, and parses
+// stdout. It fails loudly on exec error, timeout, unparseable output, or a
+// CLI-reported failure (the §12 CLI-drift guard).
+func (r *Runner) runOnce(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if spec.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, spec.Timeout)
@@ -146,9 +217,9 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	runErr := cmd.Run()
 	switch ctx.Err() {
 	case context.DeadlineExceeded:
-		return RunResult{}, fmt.Errorf("claude timed out after %s (stderr: %s)", spec.Timeout, strings.TrimSpace(stderr.String()))
+		return RunResult{}, fmt.Errorf("claude timed out after %s: %w (stderr: %s)", spec.Timeout, ctx.Err(), strings.TrimSpace(stderr.String()))
 	case context.Canceled:
-		return RunResult{}, fmt.Errorf("claude cancelled (stderr: %s)", strings.TrimSpace(stderr.String()))
+		return RunResult{}, fmt.Errorf("claude cancelled: %w (stderr: %s)", ctx.Err(), strings.TrimSpace(stderr.String()))
 	}
 	if runErr != nil {
 		return RunResult{}, fmt.Errorf("claude exec: %w (stderr: %s)", runErr, strings.TrimSpace(stderr.String()))

@@ -33,6 +33,13 @@ bot_login: your-bot-login # filters the bot's own webhook events
 store:
   db_path: wazir.db
 
+# Bounded backoff for transient GitHub HTTP calls (REST + GraphQL + forge PRs).
+# Hot-reloadable via `wazir serve`.
+retry:
+  max_attempts: 4        # total tries including the first (WAZIR_RETRY_MAX_ATTEMPTS)
+  base_delay: 500ms      # first backoff, doubles each try (WAZIR_RETRY_BASE_DELAY)
+  max_delay: 8s          # per-attempt cap (WAZIR_RETRY_MAX_DELAY)
+
 # Live reload: `wazir serve` watches this file (fsnotify) and hot-applies changes to
 # claude.* (except bin), repos, bot_login, and webhook_secret — no restart needed.
 # Changes to github auth, project, store, forge, claude.bin, or --addr require a restart
@@ -51,6 +58,7 @@ claude:
   max_rework_rounds: 3           # phase-2 rework cost breaker (attempts per card, then escalate)
   rework_command: "@wazir fix"   # PR-comment token a human uses to trigger a rework
   # rework_timeout / rework_allowed_tools default to the execute_* values if unset.
+  max_transport_retries: 2   # TOTAL claude-transport attempts incl. the first (2 = one retry); restart-only (WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES)
 
 # Local git layout for plan/execute (M4). Clones are one-per-repo and reused;
 # each in-flight card gets its own worktree. Auth uses a fresh App installation

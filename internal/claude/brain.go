@@ -125,7 +125,7 @@ func New(cfg config.ClaudeConfig, log *zap.Logger) *ClaudeBrain {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	b := &ClaudeBrain{runner: &Runner{bin: cfg.Bin, log: log}, log: log}
+	b := &ClaudeBrain{runner: &Runner{bin: cfg.Bin, log: log, maxTransportRetries: cfg.MaxTransportRetries}, log: log}
 	b.settings.Store(settingsFrom(cfg))
 	return b
 }

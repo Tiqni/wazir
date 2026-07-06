@@ -104,6 +104,7 @@ func runServe(ctx context.Context, addr string) error {
 		WorktreeRoot: cfg.Forge.WorktreeRoot,
 		Base:         cfg.Forge.BaseBranch,
 		GitToken:     auth.GitToken,
+		RetryPolicy:  githubauth.PolicyFromConfig(cfg),
 	})
 	// plan/execute seed each per-run config dir with a symlink to this plugin registry
 	// + a settings.json enabling the configured plugin, so the Superpowers skills load
@@ -147,6 +148,7 @@ func runServe(ctx context.Context, addr string) error {
 					brain.Reload(newCfg.Claude)
 					b.Reload(newCfg.Repos, newCfg.BotLogin, newCfg.GitHub.WebhookSecret)
 					worker.SetMaxBrainstormTurns(newCfg.Claude.MaxBrainstormTurns)
+					auth.SetRetryPolicy(githubauth.PolicyFromConfig(newCfg))
 					logger.Info("config reloaded")
 				},
 				func(err error) { logger.Warn("config reload failed; keeping current config", zap.Error(err)) },

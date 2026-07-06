@@ -26,6 +26,7 @@ type Config struct {
 	Store    StoreConfig   `fig:"store"`
 	Claude   ClaudeConfig  `fig:"claude"`
 	Forge    ForgeConfig   `fig:"forge"`
+	Retry    RetryConfig   `fig:"retry"`
 }
 
 // ClaudeConfig configures the headless claude-CLI brain (M2; init-plan §8.4/§11).
@@ -44,6 +45,7 @@ type ClaudeConfig struct {
 	ReworkCommand       string        `fig:"rework_command" default:"@wazir fix"`                     // WAZIR_CLAUDE_REWORK_COMMAND — PR-comment trigger token
 	ReworkTimeout       time.Duration `fig:"rework_timeout"`                                          // WAZIR_CLAUDE_REWORK_TIMEOUT — 0 => ExecuteTimeout
 	ReworkAllowedTools  string        `fig:"rework_allowed_tools"`                                    // WAZIR_CLAUDE_REWORK_ALLOWED_TOOLS — "" => ExecuteAllowedTools
+	MaxTransportRetries int           `fig:"max_transport_retries" default:"2"` // WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES — TOTAL claude-transport attempts incl. the first (2 = one retry); conservative, restart-only
 }
 
 // ForgeConfig configures the local git clone + worktree layout (M4; init-plan §8.6).
@@ -52,6 +54,15 @@ type ForgeConfig struct {
 	CloneRoot    string `fig:"clone_root" default:"~/.wazir/clones"`       // WAZIR_FORGE_CLONE_ROOT
 	WorktreeRoot string `fig:"worktree_root" default:"~/.wazir/worktrees"` // WAZIR_FORGE_WORKTREE_ROOT
 	BaseBranch   string `fig:"base_branch" default:"main"`                 // WAZIR_FORGE_BASE_BRANCH
+}
+
+// RetryConfig tunes the bounded backoff applied to transient GitHub HTTP calls
+// (REST + GraphQL + forge PRs). Reload-safe: read per-call via the transport's
+// atomic policy holder (M5 hardening).
+type RetryConfig struct {
+	MaxAttempts int           `fig:"max_attempts" default:"4"`   // WAZIR_RETRY_MAX_ATTEMPTS
+	BaseDelay   time.Duration `fig:"base_delay" default:"500ms"` // WAZIR_RETRY_BASE_DELAY
+	MaxDelay    time.Duration `fig:"max_delay" default:"8s"`     // WAZIR_RETRY_MAX_DELAY
 }
 
 // GitHubConfig holds GitHub App auth + GitHub-side identity. Secrets

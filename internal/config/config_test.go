@@ -333,3 +333,50 @@ func TestReworkExplicitOverridesPreserved(t *testing.T) {
 		t.Errorf("ReworkAllowedTools = %q, want Read,Edit (explicit override preserved)", c.Claude.ReworkAllowedTools)
 	}
 }
+
+func TestRetryDefaults(t *testing.T) {
+	t.Setenv("WAZIR_GITHUB_APP_ID", "1")
+	t.Setenv("WAZIR_GITHUB_INSTALLATION_ID", "2")
+	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "dummy-pem")
+	t.Setenv("WAZIR_PROJECT_OWNER", "acme")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
+
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Retry.MaxAttempts != 4 {
+		t.Errorf("Retry.MaxAttempts = %d, want 4", c.Retry.MaxAttempts)
+	}
+	if c.Retry.BaseDelay != 500*time.Millisecond {
+		t.Errorf("Retry.BaseDelay = %v, want 500ms", c.Retry.BaseDelay)
+	}
+	if c.Retry.MaxDelay != 8*time.Second {
+		t.Errorf("Retry.MaxDelay = %v, want 8s", c.Retry.MaxDelay)
+	}
+	if c.Claude.MaxTransportRetries != 2 {
+		t.Errorf("Claude.MaxTransportRetries = %d, want 2", c.Claude.MaxTransportRetries)
+	}
+}
+
+func TestRetryEnvOverrides(t *testing.T) {
+	t.Setenv("WAZIR_GITHUB_APP_ID", "1")
+	t.Setenv("WAZIR_GITHUB_INSTALLATION_ID", "2")
+	t.Setenv("WAZIR_GITHUB_PRIVATE_KEY", "dummy-pem")
+	t.Setenv("WAZIR_PROJECT_OWNER", "acme")
+	t.Setenv("WAZIR_PROJECT_NUMBER", "5")
+	t.Setenv("WAZIR_RETRY_MAX_ATTEMPTS", "7")
+	t.Setenv("WAZIR_RETRY_BASE_DELAY", "250ms")
+	t.Setenv("WAZIR_CLAUDE_MAX_TRANSPORT_RETRIES", "3")
+
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Retry.MaxAttempts != 7 || c.Retry.BaseDelay != 250*time.Millisecond {
+		t.Errorf("overrides not applied: %+v", c.Retry)
+	}
+	if c.Claude.MaxTransportRetries != 3 {
+		t.Errorf("Claude.MaxTransportRetries = %d, want 3", c.Claude.MaxTransportRetries)
+	}
+}

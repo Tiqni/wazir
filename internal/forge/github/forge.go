@@ -7,11 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v66/github"
 
 	"github.com/EmadMokhtar/wazir/internal/forge"
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
+
+// defaultGitRetryPolicy mirrors the config retry defaults (config.RetryConfig);
+// applied when a caller constructs the forge without an explicit RetryPolicy so
+// network git ops still retry. A real `serve` run passes cfg.Retry via
+// githubauth.PolicyFromConfig.
+var defaultGitRetryPolicy = retry.Policy{MaxAttempts: 4, BaseDelay: 500 * time.Millisecond, MaxDelay: 8 * time.Second}
 
 // Options configures the local git layout + auth for the GitHub forge.
 type Options struct {
@@ -21,6 +29,7 @@ type Options struct {
 	Base         string
 	GitToken     func(ctx context.Context) (string, error) // installation token per network op; nil = no auth header
 	RemoteURL    func(repo string) string                  // optional; defaults to https://github.com/<repo>.git
+	RetryPolicy  retry.Policy                              // bounded backoff for network git ops (clone/fetch/push)
 }
 
 // GitHubForge implements forge.CodeForge.
@@ -44,9 +53,23 @@ func New(rest *github.Client, opts Options) *GitHubForge {
 	if opts.RemoteURL == nil {
 		opts.RemoteURL = func(repo string) string { return "https://github.com/" + repo + ".git" }
 	}
+	policy := opts.RetryPolicy
+	if policy.MaxAttempts < 1 {
+		policy = defaultGitRetryPolicy
+	}
+	// Fill missing delay fields too: a caller may set MaxAttempts but leave the
+	// delays zero, and a zero BaseDelay makes retry.Backoff return 0 — a tight,
+	// no-backoff retry loop. Default each independently so partial policies still
+	// back off.
+	if policy.BaseDelay <= 0 {
+		policy.BaseDelay = defaultGitRetryPolicy.BaseDelay
+	}
+	if policy.MaxDelay <= 0 {
+		policy.MaxDelay = defaultGitRetryPolicy.MaxDelay
+	}
 	return &GitHubForge{
 		rest:         rest,
-		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken},
+		git:          gitRunner{bin: opts.GitBin, token: opts.GitToken, policy: policy},
 		cloneRoot:    opts.CloneRoot,
 		worktreeRoot: opts.WorktreeRoot,
 		base:         opts.Base,

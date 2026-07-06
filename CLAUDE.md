@@ -138,6 +138,7 @@ The `claude` section also carries `plugins_dir` (default `~/.claude/plugins`), `
 `WAZIR_CLAUDE_PLUGINS_DIR` / `WAZIR_CLAUDE_PLUGIN_ID` / `WAZIR_CLAUDE_SETTING_SOURCES`. The daemon
 authenticates `claude` via `CLAUDE_CODE_OAUTH_TOKEN` in the environment (not the committed file).
 `wazir serve` live-reloads `wazir.yaml` via an fsnotify watcher for the safe subset (`claude.*` minus `bin`, `repos`, `bot_login`, `webhook_secret`); changes to auth/`project`/`store`/`forge`/`claude.bin`/`--addr` are restart-only (logged as ignored on reload).
+The `retry` section (`max_attempts`/`base_delay`/`max_delay`, env `WAZIR_RETRY_*`) tunes bounded exponential backoff for transient GitHub HTTP (REST + GraphQL + forge PRs), applied by a retrying `http.RoundTripper` in `internal/githubauth`; it is part of the `serve` live-reload safe subset. `claude.max_transport_retries` (default 2, restart-only) caps conservative retries of pre-work `claude` transport failures. Transient git network ops (clone/fetch/push) retry at the `gitRunner.run` chokepoint. Deterministic model-reported failures are never retried.
 
 ## Testing strategy
 
@@ -230,6 +231,9 @@ collapsed; plan/execute deferred to M4) → **M4 🚧** worktree + plan + execut
 - **Prompt injection (M2+)** — issue/comment text is attacker-controllable. Scope `--allowedTools`
   tightly, run builds least-privilege in the worktree, never expose secrets to the model, never
   `--dangerously-skip-permissions` on a box with credentials.
+- **Retries are transient-only (M5).** A card only drops to `Failed` after retries are exhausted; a
+  momentary 429/5xx, git host-resolution blip, or `claude` spawn/overload no longer nukes it. Never
+  retry a paid model turn that ran (`is_error`/non-success subtype) — cost + partial side-effects.
 - **Cost (M2+)** — `claude -p` headless usage draws from a separate metered Agent SDK credit. Cap
   brainstorm turns, log per-run cost, add a daily budget circuit breaker.
 - **CLI drift (M2+)** — verify `claude` flags/JSON schema against the installed version; pin it and fail

@@ -15,13 +15,15 @@ import (
 	"github.com/bradleyfalzon/ghinstallation/v2"
 
 	"github.com/EmadMokhtar/wazir/internal/config"
+	"github.com/EmadMokhtar/wazir/internal/retry"
 )
 
 // Auth carries the two auth surfaces the daemon needs, both backed by one
 // ghinstallation.Transport so the installation token is minted/refreshed once.
 type Auth struct {
-	HTTPClient *http.Client                              // board REST+GraphQL AND forge REST (PRs)
-	GitToken   func(ctx context.Context) (string, error) // a fresh installation token per git network op
+	HTTPClient     *http.Client                              // board REST+GraphQL AND forge REST (PRs)
+	GitToken       func(ctx context.Context) (string, error) // a fresh installation token per git network op
+	SetRetryPolicy func(retry.Policy)                         // hot-swap the HTTP retry policy (config reload)
 }
 
 // New builds the shared installation transport from the App config.
@@ -34,9 +36,11 @@ func New(ctx context.Context, cfg config.Config) (Auth, error) {
 	if err != nil {
 		return Auth{}, fmt.Errorf("parse app private key: %w", err)
 	}
+	rt := newRetryTransport(tr, PolicyFromConfig(cfg)) // retries wrap the token-adding transport, so each try re-auths
 	return Auth{
-		HTTPClient: &http.Client{Transport: tr},
-		GitToken:   tr.Token, // (*ghinstallation.Transport).Token(ctx) (string, error)
+		HTTPClient:     &http.Client{Transport: rt},
+		GitToken:       tr.Token, // (*ghinstallation.Transport).Token(ctx) (string, error)
+		SetRetryPolicy: rt.setPolicy,
 	}, nil
 }
 
