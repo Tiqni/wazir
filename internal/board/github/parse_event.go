@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,14 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 			if isBot || b.reworkCommand == "" || !strings.Contains(strings.ToLower(body), strings.ToLower(b.reworkCommand)) {
 				return board.Event{Kind: board.EventIgnore}, nil
 			}
+			// Directed rework: text after the command token is a human instruction.
+			// Accept it only from a trusted commenter; a bare command (no text) keeps
+			// the "anyone who can comment" trust boundary. An untrusted author who adds
+			// an instruction is dropped whole — we don't silently run a bare fix for them.
+			instruction := reworkInstruction(body, b.reworkCommand)
+			if instruction != "" && !trustedAssociation(e.GetComment().GetAuthorAssociation()) {
+				return board.Event{Kind: board.EventIgnore}, nil
+			}
 			prNumber := prNumberFromCommentEvent(e)
 			if prNumber == 0 {
 				return board.Event{Kind: board.EventIgnore}, nil
@@ -108,7 +117,7 @@ func (b *GitHubBoard) ParseEvent(headers map[string]string, payload []byte) (boa
 			if !ok {
 				return board.Event{Kind: board.EventIgnore}, nil
 			}
-			return board.Event{Kind: board.EventReworkRequested, CardID: cardID, Repo: repo, Dedup: delivery}, nil
+			return board.Event{Kind: board.EventReworkRequested, CardID: cardID, Repo: repo, Dedup: delivery, Instruction: instruction}, nil
 		}
 		repo := e.GetRepo().GetFullName()
 		if !b.repoAllowed(rl, repo) {
@@ -229,4 +238,32 @@ func prNumberFromCommentEvent(e *github.IssueCommentEvent) int {
 		return 0
 	}
 	return n
+}
+
+// reworkInstruction returns the trimmed text following the first case-insensitive
+// occurrence of the rework command token in body — the human's requested change.
+// Empty means a bare command (feedback-only rework). The match runs against the
+// ORIGINAL body (never a lowercased copy), so a multibyte character before the
+// token can never misalign the byte offset used to slice the trailing text.
+func reworkInstruction(body, command string) string {
+	re, err := regexp.Compile("(?i)" + regexp.QuoteMeta(command))
+	if err != nil {
+		return ""
+	}
+	loc := re.FindStringIndex(body)
+	if loc == nil {
+		return ""
+	}
+	return strings.TrimSpace(body[loc[1]:])
+}
+
+// trustedAssociation reports whether a comment author's GitHub author_association
+// is trusted to direct a rework (OWNER, MEMBER, or COLLABORATOR).
+func trustedAssociation(assoc string) bool {
+	switch assoc {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	default:
+		return false
+	}
 }

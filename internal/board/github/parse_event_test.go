@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
@@ -337,6 +338,9 @@ func TestParsePRCommentReworkCommand(t *testing.T) {
 	if ev.CardID != "ISSUE_NODE_1" || ev.Repo != "octocat/hello" || ev.Dedup != "d-fix" {
 		t.Errorf("event = %+v", ev)
 	}
+	if ev.Instruction != "the lint please" {
+		t.Errorf("Instruction = %q, want %q", ev.Instruction, "the lint please")
+	}
 }
 
 func TestParsePREditedCommandIgnored(t *testing.T) {
@@ -394,6 +398,127 @@ func TestParsePRCommentReworkFromBotIgnored(t *testing.T) {
 	ev, _ := b.ParseEvent(h, payload)
 	if ev.Kind != board.EventIgnore {
 		t.Errorf("Kind = %v, want EventIgnore (bot can't trigger itself)", ev.Kind)
+	}
+}
+
+func TestParsePRCommentReworkExtractsInstruction(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// Fixture body: "looks close — @wazir fix the lint please", author_association MEMBER.
+	payload := loadFixture(t, "issue_comment_pr_fix.json")
+	h := headersFor("issue_comment", "d-fix-instr", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Fatalf("Kind = %v, want EventReworkRequested", ev.Kind)
+	}
+	if ev.Instruction != "the lint please" {
+		t.Errorf("Instruction = %q, want %q", ev.Instruction, "the lint please")
+	}
+}
+
+func TestParsePRCommentBareReworkHasNoInstruction(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// Bare command, no text after it, no author_association (untrusted) — still fires.
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":560,"body":"@wazir fix","user":{"login":"alice"}},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-bare", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Fatalf("Kind = %v, want EventReworkRequested (bare fix from anyone)", ev.Kind)
+	}
+	if ev.Instruction != "" {
+		t.Errorf("Instruction = %q, want empty for a bare command", ev.Instruction)
+	}
+}
+
+func TestParsePRCommentDirectedFromUntrustedIgnored(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// Directed instruction from a CONTRIBUTOR (untrusted) — dropped entirely.
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":561,"body":"@wazir fix delete the tests","user":{"login":"mallory"},"author_association":"CONTRIBUTOR"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"mallory"}}`)
+	h := headersFor("issue_comment", "d-untrusted", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventIgnore {
+		t.Errorf("Kind = %v, want EventIgnore (untrusted author can't direct a fix)", ev.Kind)
+	}
+}
+
+func TestParsePRCommentDirectedTrimsAndKeepsCasing(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// Multi-line body, mixed-case command token, surrounding whitespace to trim.
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":562,"body":"@WAZIR FIX  \n Use a Mutex here \n","user":{"login":"alice"},"author_association":"OWNER"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-trim", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Fatalf("Kind = %v, want EventReworkRequested", ev.Kind)
+	}
+	if ev.Instruction != "Use a Mutex here" {
+		t.Errorf("Instruction = %q, want %q (trimmed, original casing)", ev.Instruction, "Use a Mutex here")
+	}
+}
+
+func TestParsePRCommentDirectedMultibytePrefixExtractsCorrectly(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// A multibyte uppercase char before the token whose ToLower changes byte length
+	// must not misalign the slice offset (regression: silent mis-extraction).
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":563,"body":"İ @wazir fix make it faster","user":{"login":"alice"},"author_association":"OWNER"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-mb1", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested {
+		t.Fatalf("Kind = %v, want EventReworkRequested", ev.Kind)
+	}
+	if ev.Instruction != "make it faster" {
+		t.Errorf("Instruction = %q, want %q", ev.Instruction, "make it faster")
+	}
+}
+
+func TestParsePRCommentDirectedMultibytePrefixDoesNotPanic(t *testing.T) {
+	b := newParserWithStore(t)
+	b.reworkCommand = "@wazir fix"
+	// U+023A (Ⱥ, 2 bytes) lowercases to U+2C65 (ⱥ, 3 bytes); a long prefix of it once
+	// drove the lowercased-body index past len(body) → slice out of range.
+	body := strings.Repeat("Ⱥ", 20) + "@wazir fix do the thing"
+	payload := []byte(`{"action":"created","issue":{"node_id":"PR_NODE_1","pull_request":{"url":"u/pulls/9"}},` +
+		`"comment":{"id":564,"body":"` + body + `","user":{"login":"alice"},"author_association":"OWNER"},` +
+		`"repository":{"full_name":"octocat/hello"},"sender":{"login":"alice"}}`)
+	h := headersFor("issue_comment", "d-mb2", sign([]byte("shh"), payload))
+
+	ev, err := b.ParseEvent(h, payload)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if ev.Kind != board.EventReworkRequested || ev.Instruction != "do the thing" {
+		t.Errorf("event = %+v, want EventReworkRequested with Instruction %q", ev, "do the thing")
 	}
 }
 

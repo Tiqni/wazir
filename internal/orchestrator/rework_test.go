@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/EmadMokhtar/wazir/internal/board"
@@ -149,6 +150,23 @@ func TestReworkPushFailureIncrementsRound(t *testing.T) {
 	rec, _, _ := st.GetCard("I1")
 	if rec.ReworkRounds != 1 {
 		t.Errorf("ReworkRounds = %d, want 1 (the turn ran)", rec.ReworkRounds)
+	}
+}
+
+func TestReworkThreadsDirectedInstruction(t *testing.T) {
+	b, _, _, brain, w := reworkSetup(t, 0)
+	brain.rework = []ReworkResult{{Status: StatusComplete, Notes: "done"}}
+
+	ev := board.Event{Kind: board.EventReworkRequested, CardID: "I1", Instruction: "use a mutex here"}
+	if err := w.Process(context.Background(), ev); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if brain.lastReworkInstruction != "use a mutex here" {
+		t.Errorf("brain got Instruction %q, want %q", brain.lastReworkInstruction, "use a mutex here")
+	}
+	card, _ := b.GetCard(context.Background(), "I1")
+	if n := len(card.Comments); n == 0 || !strings.Contains(card.Comments[n-1].Body, "addressing your request") {
+		t.Errorf("ack comment = %+v, want the directed-variant wording", card.Comments)
 	}
 }
 

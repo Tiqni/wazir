@@ -90,7 +90,7 @@ func (w *Worker) Process(ctx context.Context, ev board.Event) error {
 		zap.String("phase", string(card.Phase)),
 		zap.String("action", d.Action.String()))
 
-	if err := w.execute(ctx, card, d); err != nil {
+	if err := w.execute(ctx, card, d, ev.Instruction); err != nil {
 		w.fail(ctx, ev.CardID, err)
 		return nil
 	}
@@ -100,7 +100,7 @@ func (w *Worker) Process(ctx context.Context, ev board.Event) error {
 	return nil
 }
 
-func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error {
+func (w *Worker) execute(ctx context.Context, card board.Card, d Decision, instruction string) error {
 	switch d.Action {
 	case ActNone:
 		return nil
@@ -128,7 +128,7 @@ func (w *Worker) execute(ctx context.Context, card board.Card, d Decision) error
 	case ActReport:
 		return w.reportPhase(ctx, card)
 	case ActRework:
-		return w.reworkPhase(ctx, card)
+		return w.reworkPhase(ctx, card, instruction)
 	case ActExecute:
 		// Direct Building re-entry (crash recovery / re-delivered Building event):
 		// recover the worktree path, branch, and plan path persisted by plan().
@@ -375,7 +375,7 @@ func (w *Worker) reportPhase(ctx context.Context, card board.Card) error {
 
 // reworkPhase re-enters the PR-head worktree, runs one claude turn to address the
 // review feedback + fix CI, and re-pushes. Human-gated; capped by maxReworkRounds.
-func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
+func (w *Worker) reworkPhase(ctx context.Context, card board.Card, instruction string) error {
 	rec, ok, err := w.store.GetCard(card.ID)
 	if err != nil {
 		return fmt.Errorf("read card record %s: %w", card.ID, err)
@@ -436,6 +436,7 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 		Feedback:      feedback,
 		FailingChecks: failing,
 		Annotations:   annotations,
+		Instruction:   instruction,
 	})
 	if err != nil {
 		// The turn didn't produce a result (a Brain-level/transport failure, not a
@@ -456,7 +457,11 @@ func (w *Worker) reworkPhase(ctx context.Context, card board.Card) error {
 	if err := w.forge.PushBranch(ctx, card.Repo, rec.Branch); err != nil {
 		return fmt.Errorf("push branch: %w", err)
 	}
-	if err := w.board.PostComment(ctx, card.ID, fmt.Sprintf("Reworked (round %d) and pushed; back for review.", rec.ReworkRounds)); err != nil {
+	ack := fmt.Sprintf("Reworked (round %d) and pushed; back for review.", rec.ReworkRounds)
+	if instruction != "" {
+		ack = fmt.Sprintf("Reworked (round %d) addressing your request; back for review.", rec.ReworkRounds)
+	}
+	if err := w.board.PostComment(ctx, card.ID, ack); err != nil {
 		return err
 	}
 	if err := w.board.MoveTo(ctx, card.ID, board.PhasePRReview); err != nil {
